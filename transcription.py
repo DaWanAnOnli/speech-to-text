@@ -1,4 +1,4 @@
-import logging, os, subprocess, asyncio, json, uuid, time
+import logging, os, subprocess, asyncio, json, uuid, time, threading
 from pathlib import Path
 from typing import Optional, Callable, Dict, List
 from datetime import datetime
@@ -44,6 +44,12 @@ _loaded_models: dict[str, object] = {}
 _model_last_used: dict[str, float] = {}
 _model_lock = asyncio.Lock()
 _IDLE_TIMEOUT_SEC = 30 * 60
+
+# Threading locks to serialize calls on shared model/enhancement instances.
+# Acquired INSIDE run_in_executor closures by worker threads, not in async context.
+_whisper_lock = threading.Lock()
+_noise_reduction_threading_lock = threading.Lock()
+_enhancement_threading_lock = threading.Lock()
 
 
 async def load_model(
@@ -275,7 +281,8 @@ def _normalize_audio(audio: "np.ndarray") -> "np.ndarray":
 
 def apply_noise_reduction(input_wav_path: str, output_wav_path: str, noise_reducer) -> None:
     """Apply Sepformer noise reduction to a WAV file."""
-    est_sources = noise_reducer.separate_file(path=input_wav_path)
+    with _noise_reduction_threading_lock:
+        est_sources = noise_reducer.separate_file(path=input_wav_path)
     # est_sources shape: (batch, time) or (batch, time, channels)
     if est_sources.dim() == 3:
         audio_tensor = est_sources[:, :, 0].squeeze(0)
@@ -289,10 +296,11 @@ def apply_noise_reduction(input_wav_path: str, output_wav_path: str, noise_reduc
 
 def apply_enhancement(input_wav_path: str, output_wav_path: str, enhancer) -> None:
     """Apply MetricGAN+ enhancement to a WAV file."""
-    enhanced_tensor = enhancer.enhance_batch(
-        enhancer.load_audio(input_wav_path).unsqueeze(0),
-        lengths=torch.tensor([1.0])
-    )
+    with _enhancement_threading_lock:
+        enhanced_tensor = enhancer.enhance_batch(
+            enhancer.load_audio(input_wav_path).unsqueeze(0),
+            lengths=torch.tensor([1.0])
+        )
     # enhanced_tensor shape: (batch, time) or (batch, time, channels)
     if enhanced_tensor.dim() == 3:
         enhanced_audio = enhanced_tensor[:, :, 0].squeeze(0)
@@ -673,7 +681,8 @@ async def _transcribe_chunk_whisper(
             ], capture_output=True, text=True, timeout=60)
 
             audio = whisper.load_audio(str(chunk_file))
-            result = whisper.transcribe(model, audio, language=None)
+            with _whisper_lock:
+                result = whisper.transcribe(model, audio, language=None)
 
             segments: List[dict] = []
             for seg in result.get("segments", []):
