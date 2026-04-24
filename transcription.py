@@ -248,8 +248,8 @@ def segments_to_srt(segments: List[dict]) -> str:
     return "\n\n".join(lines) + "\n"
 
 
-def _run_ffmpeg(cmd: List[str]) -> subprocess.CompletedProcess:
-    result = subprocess.run(cmd, capture_output=True, text=True)
+def _run_ffmpeg(cmd: List[str], timeout: int = 120) -> subprocess.CompletedProcess:
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     if result.returncode != 0:
         raise RuntimeError(f"FFmpeg error: {result.stderr}")
     return result
@@ -262,7 +262,7 @@ def convert_to_wav(input_path: str, output_path: str) -> None:
         "-ac", "1",
         "-c:a", "pcm_s16le",
         output_path
-    ])
+    ], timeout=120)
 
 
 def _normalize_audio(audio: "np.ndarray") -> "np.ndarray":
@@ -310,7 +310,7 @@ def get_audio_duration(wav_path: str) -> float:
         "-show_entries", "format=duration",
         "-of", "default=noprint_wrappers=1:nokey=1",
         wav_path
-    ], capture_output=True, text=True)
+    ], capture_output=True, text=True, timeout=30)
     try:
         return float(result.stdout.strip())
     except ValueError:
@@ -619,7 +619,7 @@ async def _transcribe_chunk_qwen(
                 "-ss", str(start_sec), "-to", str(end_sec),
                 "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le",
                 str(chunk_file)
-            ], capture_output=True, text=True)
+            ], capture_output=True, text=True, timeout=60)
 
             results = model.transcribe(str(chunk_file), return_time_stamps=True)
 
@@ -670,7 +670,7 @@ async def _transcribe_chunk_whisper(
                 "-ss", str(start_sec), "-to", str(end_sec),
                 "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le",
                 str(chunk_file)
-            ], capture_output=True, text=True)
+            ], capture_output=True, text=True, timeout=60)
 
             audio = whisper.load_audio(str(chunk_file))
             result = whisper.transcribe(model, audio, language=None)
