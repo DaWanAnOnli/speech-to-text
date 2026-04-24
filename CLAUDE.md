@@ -23,7 +23,7 @@ Windows (dev) --rsync/scp--> Ubuntu 24.04 server (GPU, e.g. RTX 5090)
                                         |
                               FFmpeg: any format -> 16kHz mono WAV
                                         |
-                              [Optional] MP-SENet-DNS: Noise Reduction
+                              [Optional] Sepformer: Noise Reduction
                                         |
                               [Optional] MetricGAN+: Audio Enhancement
                                         |
@@ -103,7 +103,7 @@ curl -X POST -F "file=@audio.mp3" -F "model=qwen" http://<server-ip>:8000/upload
 | `STT_MAX_FILE_MB` | `10000` | Max upload file size in MB |
 | `STT_ENABLE_NOISE_REDUCTION` | `true` | Enable MP-SENet noise reduction by default |
 | `STT_ENABLE_AUDIO_ENHANCEMENT` | `true` | Enable MetricGAN+ enhancement by default |
-| `STT_NOISE_REDUCTION_MODEL` | `JacobLinCool/MP-SENet-DNS` | HuggingFace model for noise reduction |
+| `STT_NOISE_REDUCTION_MODEL` | `speechbrain/sepformer-wham16k-enhancement` | HuggingFace model for noise reduction |
 | `STT_ENHANCEMENT_MODEL` | `speechbrain/metricgan-plus-voicebank` | HuggingFace model for audio enhancement |
 
 ## Key Implementation Notes
@@ -111,7 +111,7 @@ curl -X POST -F "file=@audio.mp3" -F "model=qwen" http://<server-ip>:8000/upload
 - **Model pool with idle eviction**: transcription models load on first use, stay cached for 30 minutes of idle, then are evicted. Enhancement models are singletons loaded once and kept in memory.
 - **Model selection at upload time**: the frontend sends a `model` field with the upload. Both `qwen` and `whisper` are available.
 - **Per-request enhancement toggles**: the frontend sends `enable_noise_reduction` and `enable_audio_enhancement` fields with each upload (both default to `true`). The server falls back to env var defaults if not provided.
-- **Enhancement pipeline**: FFmpeg converts to 16kHz mono WAV, then optionally applies MP-SENet noise reduction and/or MetricGAN+ enhancement, then transcribes. Applied to the full file once before chunking.
+- **Enhancement pipeline**: FFmpeg converts to 16kHz mono WAV, then optionally applies Sepformer noise reduction and/or MetricGAN+ enhancement, then transcribes. Applied to the full file once before chunking.
 - **Filename includes model key**: result files are named `{original_stem}_{job_id}_{model_key}.srt` (e.g., `myfile_a1b2c3d4_qwen.srt`).
 - **SRT output only**: only `.srt` files are generated — no JSON sidecar.
 - **Chunked transcription**: audio split into 30s chunks, transcribed sequentially, progress reported per chunk via WebSocket.
@@ -140,4 +140,4 @@ Server sends JSON messages with these shapes:
 - Uploaded files are deleted after transcription starts (`finally` block in `run_transcription`)
 - FFmpeg must be installed on the server (`apt install ffmpeg`)
 - Models are cached at `~/.cache/huggingface/` after first download
-- Qwen model + ForcedAligner cache: ~4.6GB; Whisper-large-v3 cache: ~3GB; MP-SENet-DNS cache: ~300MB; MetricGAN+ cache: ~300MB
+- Qwen model + ForcedAligner cache: ~4.6GB; Whisper-large-v3 cache: ~3GB; Sepformer noise reduction cache: ~300MB; MetricGAN+ cache: ~300MB

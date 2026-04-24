@@ -98,11 +98,10 @@ async def load_noise_reduction_model(progress_callback=None):
                 "message": "Loading noise reduction model...",
                 "progress": 16
             })
-        from transformers import pipeline
-        _noise_reduction_model = pipeline(
-            task="audio-to-audio",
-            model=NOISE_REDUCTION_MODEL,
-            device="cuda" if torch.cuda.is_available() else "cpu",
+        from speechbrain.pretrained import SepformerSeparation
+        _noise_reduction_model = SepformerSeparation.from_hparams(
+            source=NOISE_REDUCTION_MODEL,
+            run_opts={"device": "cuda" if torch.cuda.is_available() else "cpu"},
         )
         return _noise_reduction_model
 
@@ -258,41 +257,33 @@ def _normalize_audio(audio: "np.ndarray") -> "np.ndarray":
 
 
 def apply_noise_reduction(input_wav_path: str, output_wav_path: str, noise_reducer) -> None:
-    """Apply MP-SENet noise reduction to a WAV file."""
+    """Apply Sepformer noise reduction to a WAV file."""
     import soundfile as sf
     import numpy as np
+    import torch
 
-    audio_array, sr = sf.read(input_wav_path, dtype='float32')
-    if audio_array.ndim > 1:
-        audio_array = audio_array.mean(axis=1)
-
-    result = noise_reducer({"raw": audio_array, "sampling_rate": sr})
-    output_audio = (
-        result["audio"][0]
-        if isinstance(result, dict)
-        else result[0]["audio"][0]
-    )
+    est_sources = noise_reducer.separate_file(path=input_wav_path)
+    # est_sources shape: (batch, sources, time) — take first source
+    if est_sources.dim() == 3:
+        audio_tensor = est_sources[:, 0, :].squeeze(0)
+    else:
+        audio_tensor = est_sources.squeeze(0)
+    output_audio = audio_tensor.cpu().numpy()
 
     output_audio = _normalize_audio(output_audio)
-    sf.write(output_wav_path, output_audio, sr, subtype='PCM_16')
+    sf.write(output_wav_path, output_audio, 16000, subtype='PCM_16')
 
 
 def apply_enhancement(input_wav_path: str, output_wav_path: str, enhancer) -> None:
     """Apply MetricGAN+ enhancement to a WAV file."""
     import soundfile as sf
     import numpy as np
-    import torch
 
-    audio_array, sr = sf.read(input_wav_path, dtype='float32')
-    if audio_array.ndim > 1:
-        audio_array = audio_array.mean(axis=1)
-
-    tensor = torch.from_numpy(audio_array).unsqueeze(0).to(enhancer.device)
-    enhanced_tensor = enhancer.enhance_batch(tensor, lengths=torch.tensor([1.0]))
+    enhanced_tensor = enhancer.enhance_file(input_wav_path, savedir=None)
     enhanced_audio = enhanced_tensor.squeeze(0).cpu().numpy()
 
     enhanced_audio = _normalize_audio(enhanced_audio)
-    sf.write(output_wav_path, enhanced_audio, sr, subtype='PCM_16')
+    sf.write(output_wav_path, enhanced_audio, 16000, subtype='PCM_16')
 
 
 def get_audio_duration(wav_path: str) -> float:

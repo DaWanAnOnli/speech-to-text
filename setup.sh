@@ -38,14 +38,14 @@ python -c "from qwen_asr import Qwen3ASRModel; import torch; Qwen3ASRModel.from_
 python -c "import whisper_timestamped; whisper_timestamped.load_model('large-v3', device='cpu')"
 
 # 10. Pre-download enhancement models to cache (~3-5GB total)
-# MP-SENet-DNS via transformers (installed by qwen-asr transitive deps)
+# Sepformer noise reduction via SpeechBrain
 python -c "
-from transformers import pipeline
-import numpy as np
-pipe = pipeline(task='audio-to-audio', model='JacobLinCool/MP-SENet-DNS', device='cpu')
-dummy = {'raw': np.zeros(16000, dtype=np.float32), 'sampling_rate': 16000}
-result = pipe(dummy)
-print('MP-SENet-DNS cached')
+from speechbrain.pretrained import SepformerSeparation
+model = SepformerSeparation.from_hparams(
+    source='speechbrain/sepformer-wham16k-enhancement',
+    run_opts={'device': 'cpu'}
+)
+print('Sepformer noise reduction cached')
 "
 
 # MetricGAN+ via SpeechBrain
