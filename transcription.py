@@ -1,7 +1,9 @@
-import os, subprocess, asyncio, json, uuid, time
+import logging, os, subprocess, asyncio, json, uuid, time
 from pathlib import Path
 from typing import Optional, Callable, Dict, List
 from datetime import datetime
+
+logger = logging.getLogger("speech-to-text")
 
 import torch
 import numpy as np
@@ -360,6 +362,7 @@ async def transcribe_file(
                         "progress": 18
                     })
                 apply_noise_reduction(str(temp_wav), str(temp_denoised), noise_reducer)
+                logger.info("[%s] Noise reduction applied", job_id)
 
                 if progress_callback:
                     await progress_callback({
@@ -375,6 +378,7 @@ async def transcribe_file(
                         "progress": 22
                     })
                 apply_enhancement(str(temp_denoised), str(enhanced_wav), enhancer_model)
+                logger.info("[%s] Audio enhancement applied", job_id)
 
                 if progress_callback:
                     await progress_callback({
@@ -386,8 +390,7 @@ async def transcribe_file(
                 temp_wav.unlink(missing_ok=True)
                 temp_wav = enhanced_wav
             except Exception as exc:
-                import logging
-                logging.warning(f"Enhancement failed, using raw audio: {exc}")
+                logger.warning("[%s] Enhancement failed, using raw audio: %s", job_id, exc)
                 for f in [enhanced_wav, temp_denoised]:
                     try:
                         f.unlink(missing_ok=True)
@@ -417,6 +420,8 @@ async def transcribe_file(
                         "progress": 18
                     })
                 apply_noise_reduction(str(temp_wav), str(denoised_wav), noise_reducer)
+                logger.info("[%s] Noise reduction applied", job_id)
+
                 if progress_callback:
                     await progress_callback({
                         "stage": "noise_reducing",
@@ -426,8 +431,7 @@ async def transcribe_file(
                 temp_wav.unlink()
                 temp_wav = denoised_wav
             except Exception as exc:
-                import logging
-                logging.warning(f"Noise reduction failed, using raw audio: {exc}")
+                logger.warning("[%s] Noise reduction failed, using raw audio: %s", job_id, exc)
                 try:
                     denoised_wav.unlink(missing_ok=True)
                 except Exception:
@@ -455,6 +459,8 @@ async def transcribe_file(
                         "progress": 18
                     })
                 apply_enhancement(str(temp_wav), str(enhanced_wav), enhancer_model)
+                logger.info("[%s] Audio enhancement applied", job_id)
+
                 if progress_callback:
                     await progress_callback({
                         "stage": "enhancing",
@@ -464,8 +470,7 @@ async def transcribe_file(
                 temp_wav.unlink()
                 temp_wav = enhanced_wav
             except Exception as exc:
-                import logging
-                logging.warning(f"Enhancement failed, using raw audio: {exc}")
+                logger.warning("[%s] Audio enhancement failed, using raw audio: %s", job_id, exc)
                 try:
                     enhanced_wav.unlink(missing_ok=True)
                 except Exception:
