@@ -279,12 +279,16 @@ def _normalize_audio(audio: "np.ndarray") -> "np.ndarray":
     return audio
 
 
-def _append_to_wav(chunk_data: np.ndarray, output_path: str, samplerate: int = 16000) -> None:
+def _append_to_wav(chunk_data: np.ndarray, output_path: str) -> None:
     """Append chunk data to an existing WAV file. Creates the file if it doesn't exist."""
-    mode = 'r+' if Path(output_path).exists() else 'w'
-    with sf.SoundFile(output_path, mode, samplerate=samplerate, subtype='PCM_16', channels=1) as f:
-        f.seek(0, 2)  # SEEK_END
-        f.write(chunk_data)
+    if Path(output_path).exists():
+        # 'r+' mode only accepts dtype/closefd — seek to end and append
+        with sf.SoundFile(output_path, 'r+', dtype='FLOAT') as f:
+            f.seek(0, 2)  # SEEK_END
+            f.write(chunk_data.astype(np.float32))
+    else:
+        with sf.SoundFile(output_path, 'w', samplerate=16000, subtype='PCM_16', channels=1) as f:
+            f.write(chunk_data.astype(np.float32))
 
 
 def process_noise_reduction_chunk(input_wav_path: str, noise_reducer) -> np.ndarray:
