@@ -136,6 +136,7 @@ async def upload_file(
         run_transcription(job_id, str(temp_path), file.filename or "unknown",
                          model, noise_reduction_flag, enhancement_flag)
     )
+    logger.info(f"[{job_id[:8]}] Task created for {file.filename}")
 
     return {"job_id": job_id, "filename": file.filename}
 
@@ -172,40 +173,47 @@ async def run_transcription(job_id: str, file_path: str, filename: str,
             "progress": 0
         })
     await _active_job_semaphore.acquire()
+    logger.info(f"[{job_id[:8]}] Semaphore acquired")
 
     await manager.send(job_id, {
         "stage": "queued_starting",
         "message": "Starting transcription...",
         "progress": 0
     })
+    logger.info(f"[{job_id[:8]}] queued_starting sent, calling transcribe_file...")
 
     # Wrap in a timeout so we get a traceback if it hangs
     try:
+        logger.info(f"[{job_id[:8]}] about to await transcribe_file")
         await asyncio.wait_for(
             transcribe_file(file_path, filename, job_id, model_key,
                             enable_noise_reduction, enable_audio_enhancement,
                             progress_callback),
             timeout=30
         )
+        logger.info(f"[{job_id[:8]}] transcribe_file completed normally")
     except asyncio.TimeoutError:
-        logger.exception(f"[{job_id[:8]}] Transcription timed out after 30s")
+        logger.warning(f"[{job_id[:8]}] Transcription timed out after 30s — this means transcribe_file is blocking synchronously")
         await manager.send(job_id, {
             "stage": "error",
-            "message": "Transcription timed out after 300 seconds",
+            "message": "Transcription timed out after 30 seconds",
             "progress": 0
         })
     except Exception as exc:
+        logger.exception(f"[{job_id[:8]}] Transcription raised exception")
         await manager.send(job_id, {
             "stage": "error",
             "message": f"Transcription failed: {exc}",
             "progress": 0
         })
     finally:
+        logger.info(f"[{job_id[:8]}] Cleaning up")
         try:
             Path(file_path).unlink()
         except OSError:
             pass
         _active_job_semaphore.release()
+        logger.info(f"[{job_id[:8]}] Semaphore released")
 
 
 @app.websocket("/ws/{job_id}")
