@@ -1,4 +1,4 @@
-import logging, os, subprocess, asyncio, json, uuid, time, threading
+import logging, os, subprocess, asyncio, json, uuid, time, threading, math
 from pathlib import Path
 from typing import Optional, Callable, Dict, List
 from datetime import datetime
@@ -279,37 +279,38 @@ def _normalize_audio(audio: "np.ndarray") -> "np.ndarray":
     return audio
 
 
-def apply_noise_reduction(input_wav_path: str, output_wav_path: str, noise_reducer) -> None:
-    """Apply Sepformer noise reduction to a WAV file."""
+def _append_to_wav(chunk_data: np.ndarray, output_path: str, samplerate: int = 16000) -> None:
+    """Append chunk data to an existing WAV file. Creates the file if it doesn't exist."""
+    mode = 'r+' if Path(output_path).exists() else 'w'
+    with sf.SoundFile(output_path, mode, samplerate=samplerate, subtype='PCM_16', channels=1) as f:
+        f.seek(0, 2)  # SEEK_END
+        f.write(chunk_data)
+
+
+def process_noise_reduction_chunk(input_wav_path: str, noise_reducer) -> np.ndarray:
+    """Apply Sepformer noise reduction to a WAV chunk. Returns processed audio as numpy array."""
     with _noise_reduction_threading_lock:
         est_sources = noise_reducer.separate_file(path=input_wav_path)
-    # est_sources shape: (batch, time) or (batch, time, channels)
     if est_sources.dim() == 3:
         audio_tensor = est_sources[:, :, 0].squeeze(0)
     else:
         audio_tensor = est_sources.squeeze(0)
     output_audio = audio_tensor.cpu().numpy()
-
-    output_audio = _normalize_audio(output_audio)
-    sf.write(output_wav_path, output_audio, 16000, subtype='PCM_16')
+    return _normalize_audio(output_audio)
 
 
-def apply_enhancement(input_wav_path: str, output_wav_path: str, enhancer) -> None:
-    """Apply MetricGAN+ enhancement to a WAV file."""
+def process_enhancement_chunk(input_wav_path: str, enhancer) -> np.ndarray:
+    """Apply MetricGAN+ enhancement to a WAV chunk. Returns enhanced audio as numpy array."""
     with _enhancement_threading_lock:
         enhanced_tensor = enhancer.enhance_batch(
             enhancer.load_audio(input_wav_path).unsqueeze(0),
             lengths=torch.tensor([1.0])
         )
-    # enhanced_tensor shape: (batch, time) or (batch, time, channels)
     if enhanced_tensor.dim() == 3:
         enhanced_audio = enhanced_tensor[:, :, 0].squeeze(0)
     else:
         enhanced_audio = enhanced_tensor.squeeze(0)
-    enhanced_audio = enhanced_audio.cpu().numpy()
-
-    enhanced_audio = _normalize_audio(enhanced_audio)
-    sf.write(output_wav_path, enhanced_audio, 16000, subtype='PCM_16')
+    return _normalize_audio(enhanced_audio.cpu().numpy())
 
 
 def get_audio_duration(wav_path: str) -> float:
@@ -362,14 +363,18 @@ async def transcribe_file(
             "progress": 15
         })
 
-    # ---- Stage 2: Enhancement ----
+    # ---- Stage 2: Enhancement (chunked to avoid OOM on large files) ----
     if enable_noise_reduction or enable_audio_enhancement:
         enhanced_wav = UPLOADS_DIR / f"{job_id}_enhanced.wav"
 
-        if enable_noise_reduction and enable_audio_enhancement:
-            # Both enabled: noise reduction first, then enhancement
-            temp_denoised = UPLOADS_DIR / f"{job_id}_denoised.wav"
-            try:
+        duration = get_audio_duration(str(temp_wav))
+        chunk_sec = CHUNK_DURATION_SEC
+        total_chunks = max(1, math.ceil(duration / chunk_sec))
+
+        noise_reducer = None
+        enhancer_model = None
+        try:
+            if enable_noise_reduction:
                 if progress_callback:
                     await progress_callback({
                         "stage": "noise_reducing",
@@ -377,96 +382,8 @@ async def transcribe_file(
                         "progress": 16
                     })
                 noise_reducer = await load_noise_reduction_model()
-                if progress_callback:
-                    await progress_callback({
-                        "stage": "noise_reducing",
-                        "message": "Applying noise reduction...",
-                        "progress": 18
-                    })
-                apply_noise_reduction(str(temp_wav), str(temp_denoised), noise_reducer)
-                logger.info("[%s] Noise reduction applied", job_id)
 
-                if progress_callback:
-                    await progress_callback({
-                        "stage": "enhancing",
-                        "message": "Loading enhancement model...",
-                        "progress": 20
-                    })
-                enhancer_model = await load_enhancement_model()
-                if progress_callback:
-                    await progress_callback({
-                        "stage": "enhancing",
-                        "message": "Applying audio enhancement...",
-                        "progress": 22
-                    })
-                apply_enhancement(str(temp_denoised), str(enhanced_wav), enhancer_model)
-                logger.info("[%s] Audio enhancement applied", job_id)
-
-                if progress_callback:
-                    await progress_callback({
-                        "stage": "enhancing",
-                        "message": "Enhancement complete",
-                        "progress": 35
-                    })
-                temp_denoised.unlink(missing_ok=True)
-                temp_wav.unlink(missing_ok=True)
-                temp_wav = enhanced_wav
-            except Exception as exc:
-                logger.warning("[%s] Enhancement failed, using raw audio: %s", job_id, exc)
-                for f in [enhanced_wav, temp_denoised]:
-                    try:
-                        f.unlink(missing_ok=True)
-                    except Exception:
-                        pass
-                if progress_callback:
-                    await progress_callback({
-                        "stage": "enhancing",
-                        "message": f"Enhancement skipped: {exc}",
-                        "progress": 35
-                    })
-
-        elif enable_noise_reduction:
-            denoised_wav = UPLOADS_DIR / f"{job_id}_denoised.wav"
-            try:
-                if progress_callback:
-                    await progress_callback({
-                        "stage": "noise_reducing",
-                        "message": "Loading noise reduction model...",
-                        "progress": 16
-                    })
-                noise_reducer = await load_noise_reduction_model()
-                if progress_callback:
-                    await progress_callback({
-                        "stage": "noise_reducing",
-                        "message": "Applying noise reduction...",
-                        "progress": 18
-                    })
-                apply_noise_reduction(str(temp_wav), str(denoised_wav), noise_reducer)
-                logger.info("[%s] Noise reduction applied", job_id)
-
-                if progress_callback:
-                    await progress_callback({
-                        "stage": "noise_reducing",
-                        "message": "Noise reduction complete",
-                        "progress": 35
-                    })
-                temp_wav.unlink()
-                temp_wav = denoised_wav
-            except Exception as exc:
-                logger.warning("[%s] Noise reduction failed, using raw audio: %s", job_id, exc)
-                try:
-                    denoised_wav.unlink(missing_ok=True)
-                except Exception:
-                    pass
-                if progress_callback:
-                    await progress_callback({
-                        "stage": "noise_reducing",
-                        "message": f"Noise reduction skipped: {exc}",
-                        "progress": 35
-                    })
-
-        elif enable_audio_enhancement:
-            try:
+            if enable_audio_enhancement:
                 if progress_callback:
                     await progress_callback({
                         "stage": "enhancing",
@@ -474,35 +391,81 @@ async def transcribe_file(
                         "progress": 16
                     })
                 enhancer_model = await load_enhancement_model()
-                if progress_callback:
-                    await progress_callback({
-                        "stage": "enhancing",
-                        "message": "Applying audio enhancement...",
-                        "progress": 18
-                    })
-                apply_enhancement(str(temp_wav), str(enhanced_wav), enhancer_model)
-                logger.info("[%s] Audio enhancement applied", job_id)
+
+            if progress_callback:
+                await progress_callback({
+                    "stage": "noise_reducing" if enable_noise_reduction else "enhancing",
+                    "message": f"Processing 1/{total_chunks}...",
+                    "progress": 17
+                })
+
+            for chunk_idx in range(total_chunks):
+                start_sec = chunk_idx * chunk_sec
+                end_sec = min((chunk_idx + 1) * chunk_sec, duration)
+                chunk_file = UPLOADS_DIR / f"{job_id}_chunk_{chunk_idx}.wav"
+
+                subprocess.run([
+                    "ffmpeg", "-y", "-i", str(temp_wav),
+                    "-ss", str(start_sec), "-to", str(end_sec),
+                    "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le",
+                    str(chunk_file)
+                ], capture_output=True, text=True, timeout=60)
+
+                chunk_audio = None
+                try:
+                    if noise_reducer is not None:
+                        chunk_audio = process_noise_reduction_chunk(str(chunk_file), noise_reducer)
+                        torch.cuda.empty_cache()
+                    if enhancer_model is not None:
+                        if chunk_audio is not None:
+                            chunk_wav = UPLOADS_DIR / f"{job_id}_chunk_{chunk_idx}_enh.wav"
+                            sf.write(str(chunk_wav), chunk_audio, 16000, subtype='PCM_16')
+                            chunk_audio = process_enhancement_chunk(str(chunk_wav), enhancer_model)
+                            torch.cuda.empty_cache()
+                            chunk_wav.unlink(missing_ok=True)
+                        else:
+                            chunk_audio = process_enhancement_chunk(str(chunk_file), enhancer_model)
+                            torch.cuda.empty_cache()
+
+                    if chunk_audio is None:
+                        chunk_data, _ = sf.read(str(chunk_file), dtype='float32')
+                        chunk_audio = _normalize_audio(chunk_data)
+
+                    _append_to_wav(chunk_audio, str(enhanced_wav))
+                    logger.info("[%s] Enhancement chunk %d/%d applied", job_id, chunk_idx + 1, total_chunks)
+                finally:
+                    chunk_file.unlink(missing_ok=True)
 
                 if progress_callback:
+                    prog = 17 + int((chunk_idx + 1) / total_chunks * 18)
                     await progress_callback({
-                        "stage": "enhancing",
-                        "message": "Enhancement complete",
-                        "progress": 35
+                        "stage": "noise_reducing" if enable_noise_reduction else "enhancing",
+                        "message": f"Processing {chunk_idx + 1}/{total_chunks}...",
+                        "progress": prog
                     })
-                temp_wav.unlink()
-                temp_wav = enhanced_wav
-            except Exception as exc:
-                logger.warning("[%s] Audio enhancement failed, using raw audio: %s", job_id, exc)
+
+            logger.info("[%s] Enhancement complete (%d chunks)", job_id, total_chunks)
+            if progress_callback:
+                await progress_callback({
+                    "stage": "noise_reducing" if enable_noise_reduction else "enhancing",
+                    "message": "Enhancement complete",
+                    "progress": 35
+                })
+            temp_wav.unlink(missing_ok=True)
+            temp_wav = enhanced_wav
+        except Exception as exc:
+            logger.warning("[%s] Enhancement failed, using raw audio: %s", job_id, exc)
+            for f in [enhanced_wav]:
                 try:
-                    enhanced_wav.unlink(missing_ok=True)
+                    f.unlink(missing_ok=True)
                 except Exception:
                     pass
-                if progress_callback:
-                    await progress_callback({
-                        "stage": "enhancing",
-                        "message": f"Enhancement skipped: {exc}",
-                        "progress": 35
-                    })
+            if progress_callback:
+                await progress_callback({
+                    "stage": "noise_reducing" if enable_noise_reduction else "enhancing",
+                    "message": f"Enhancement skipped: {exc}",
+                    "progress": 35
+                })
     # ---- End Stage 2 ----
 
     # ---- Stage 3: Load Model ----

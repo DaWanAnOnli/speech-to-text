@@ -52,7 +52,7 @@ The Ubuntu server runs the FastAPI server. Windows users access it via browser a
 | `config.py` | Environment variables (HOST, PORT, CHUNK_DURATION, etc.) |
 | `main.py` | Uvicorn entry point (`python main.py`) |
 | `app.py` | FastAPI routes, WebSocket manager |
-| `transcription.py` | Model loading (pool), FFmpeg conversion, chunked ASR pipeline |
+| `transcription.py` | Model loading (pool), FFmpeg conversion, chunked enhancement + chunked ASR pipeline |
 | `templates/index.html` | Web UI page |
 | `static/style.css` | UI styling (SaaS / product aesthetic) |
 | `static/app.js` | UI JavaScript (drag-drop, WebSocket, download) |
@@ -117,13 +117,13 @@ curl -X POST \
 - **Model pool with idle eviction**: transcription models load on first use, stay cached for 30 minutes of idle, then are evicted. Enhancement models are singletons loaded once and kept in memory.
 - **Model selection at upload time**: the frontend sends a `model` field with the upload. Both `qwen` and `whisper` are available.
 - **Per-request enhancement toggles**: the frontend sends `enable_noise_reduction` and `enable_audio_enhancement` fields with each upload (both default to `true`). The server falls back to env var defaults if not provided.
-- **Enhancement pipeline**: FFmpeg converts to 16kHz mono WAV, then optionally applies Sepformer noise reduction and/or MetricGAN+ enhancement, then transcribes. Applied to the full file once before chunking.
+- **Enhancement pipeline**: FFmpeg converts to 16kHz mono WAV, then optionally applies Sepformer noise reduction and/or MetricGAN+ enhancement in 30s chunks (same chunk size as transcription), with `torch.cuda.empty_cache()` between chunks to avoid OOM on large files.
 - **Filename includes model key**: result files are named `{original_stem}_{job_id}_{model_key}.srt` (e.g., `myfile_a1b2c3d4_qwen.srt`).
 - **SRT output only**: only `.srt` files are generated — no JSON sidecar.
 - **Chunked transcription**: audio split into 30s chunks, transcribed sequentially, progress reported per chunk via WebSocket.
 - **Progress via WebSocket**: each upload gets a `job_id`; client connects to `/ws/{job_id}` for live stage updates.
 - **No history**: no persistence between sessions — SRT files are cleaned up after 24 hours.
-- **Enhancement is non-fatal**: if enhancement fails, the pipeline logs a warning and continues with the original (non-enhanced) audio.
+- **Enhancement is non-fatal**: if enhancement fails, the pipeline logs a warning and continues with the original (non-enhanced) audio. Chunked processing also prevents OOM on large files by limiting GPU memory pressure per 30s chunk.
 - **Parallel multi-file processing**: multiple files can be uploaded simultaneously (file input has `multiple` attribute, drag-drop accepts multiple files). Each upload gets its own job card with independent progress. The server enforces a concurrency limit of `MAX_CONCURRENT_JOBS` (default 2) via a semaphore — excess uploads queue indefinitely and receive `queued` stage messages until a slot frees up. Each job card has a remove (X) button and a download button (on completion).
 - **GPU memory guard**: `_check_gpu_memory()` is called at the start of each transcription. If GPU memory is nearly exhausted, it raises `RuntimeError`, which is caught by `run_transcription` and sent as an `error` stage to the frontend. This prevents OOM crashes on long files.
 
@@ -155,7 +155,8 @@ Example output:
 ```
 speech-to-text | [5d7dc88a] Starting transcription | model=Qwen3-ASR-1.7B | enhancements=noise_reduction, audio_enhancement | file=video.mp4
 speech-to-text | [5d7dc88a] Noise reduction applied
-speech-to-text | [5d7dc88a] Audio enhancement applied
+speech-to-text | [5d7dc88a] Enhancement chunk 1/80 applied
+speech-to-text | [5d7dc88a] Enhancement complete (80 chunks)
 ```
 
 ## Development Notes
