@@ -282,8 +282,7 @@ def _normalize_audio(audio: "np.ndarray") -> "np.ndarray":
 def _append_to_wav(chunk_data: np.ndarray, output_path: str) -> None:
     """Append chunk data to an existing WAV file. Creates the file if it doesn't exist."""
     if Path(output_path).exists():
-        # 'r+' mode only accepts dtype/closefd — seek to end and append
-        with sf.SoundFile(output_path, 'r+', dtype='FLOAT') as f:
+        with sf.SoundFile(output_path, 'r+') as f:
             f.seek(0, 2)  # SEEK_END
             f.write(chunk_data.astype(np.float32))
     else:
