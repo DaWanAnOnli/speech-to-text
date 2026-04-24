@@ -4,3 +4,4 @@ python-multipart>=0.0.19
 websockets>=12.0
 aiofiles>=24.1.0
 ffmpeg-python>=0.2.0
+whisper-timestamped>=1.15.0

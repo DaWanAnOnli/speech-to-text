@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Speech to Text — Qwen3-ASR</title>
+  <title>Speech to Text</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/static/style.css" />
@@ -25,12 +25,21 @@
         <span class="brand-name">Speech to Text</span>
       </div>
       <div class="navbar-meta">
-        <span class="model-badge">Qwen3-ASR-1.7B</span>
+        <span class="model-badge" id="modelBadge"></span>
       </div>
     </nav>
 
     <!-- Main Content -->
     <main class="main">
+
+      <!-- Model Selector -->
+      <div class="model-selector-wrap">
+        <label class="model-selector-label" for="modelSelect">Transcription Model</label>
+        <select id="modelSelect" class="model-select">
+          <option value="qwen">Qwen3-ASR-1.7B</option>
+          <option value="whisper">Whisper-large-v3</option>
+        </select>
+      </div>
 
       <!-- Upload Section -->
       <section class="upload-section" id="uploadSection">
@@ -134,6 +143,8 @@
             <div class="meta-row">
               <span class="meta-badge meta-badge--lang" id="resultLang">—</span>
               <span class="meta-sep">·</span>
+              <span class="meta-badge meta-badge--model" id="resultModel">—</span>
+              <span class="meta-sep">·</span>
               <span class="meta-text" id="resultTime">—</span>
             </div>
           </div>
@@ -154,7 +165,7 @@
 
     <!-- Footer -->
     <footer class="footer">
-      <span>Powered by <a href="https://huggingface.co/Qwen/Qwen3-ASR-1.7B" target="_blank" rel="noopener">Qwen3-ASR-1.7B</a> · All processing done locally</span>
+      <span id="footerCredit">All processing done locally</span>
     </footer>
 
   </div>

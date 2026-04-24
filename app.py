@@ -1,16 +1,16 @@
-import uuid, asyncio, json, time
+import uuid, asyncio, time
 from pathlib import Path
 from contextlib import asynccontextmanager
 
 from fastapi import (
     FastAPI, UploadFile, File, HTTPException,
-    WebSocket, WebSocketDisconnect
+    WebSocket, WebSocketDisconnect, Form
 )
 from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from config import RESULTS_DIR, UPLOADS_DIR, MAX_FILE_SIZE_BYTES
-from transcription import load_model, transcribe_file
+from transcription import load_model, transcribe_file, SUPPORTED_MODELS, _eviction_loop
 
 
 # === Periodic cleanup ===
@@ -23,7 +23,7 @@ async def _cleanup_loop():
 
 def _cleanup_old_results(max_age_seconds: float = 86400):
     now = time.time()
-    for p in list(RESULTS_DIR.glob("*.srt")) + list(RESULTS_DIR.glob("*.json")):
+    for p in RESULTS_DIR.glob("*.srt"):
         try:
             if now - p.stat().st_mtime > max_age_seconds:
                 p.unlink()
@@ -31,16 +31,16 @@ def _cleanup_old_results(max_age_seconds: float = 86400):
             pass
 
 
-# === Lifespan: pre-load model at startup ===
+# === Lifespan: start eviction loop at startup ===
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _cleanup_old_results()
-    asyncio.create_task(load_model())
+    asyncio.create_task(_eviction_loop())
     asyncio.create_task(_cleanup_loop())
     yield
 
-app = FastAPI(title="Qwen3-ASR Speech-to-Text", lifespan=lifespan)
+app = FastAPI(title="Speech-to-Text", lifespan=lifespan)
 
 app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
 
@@ -83,7 +83,16 @@ async def root():
 
 
 @app.post("/upload")
-async def upload_file(file: UploadFile = File(...)):
+async def upload_file(
+    file: UploadFile = File(...),
+    model: str = Form(default="qwen"),
+):
+    if model not in SUPPORTED_MODELS:
+        raise HTTPException(
+            400,
+            f"Unknown model: {model}. Supported: {', '.join(SUPPORTED_MODELS)}"
+        )
+
     ext = Path(file.filename or "").suffix.lstrip(".").lower()
     if ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(
@@ -106,18 +115,18 @@ async def upload_file(file: UploadFile = File(...)):
         f.write(content)
 
     asyncio.create_task(
-        run_transcription(job_id, str(temp_path), file.filename or "unknown")
+        run_transcription(job_id, str(temp_path), file.filename or "unknown", model)
     )
 
     return {"job_id": job_id, "filename": file.filename}
 
 
-async def run_transcription(job_id: str, file_path: str, filename: str):
+async def run_transcription(job_id: str, file_path: str, filename: str, model_key: str = "qwen"):
     async def progress_callback(data: dict):
         await manager.send(job_id, data)
 
     try:
-        await transcribe_file(file_path, filename, job_id, progress_callback)
+        await transcribe_file(file_path, filename, job_id, model_key, progress_callback)
     except Exception as exc:
         await manager.send(job_id, {
             "stage": "error",
@@ -141,33 +150,11 @@ async def websocket_endpoint(ws: WebSocket, job_id: str):
         manager.disconnect(job_id)
 
 
-@app.get("/result/{result_id}")
-async def get_result_json(result_id: str):
-    path = RESULTS_DIR / f"{result_id}.json"
-    if not path.exists():
-        raise HTTPException(404, "Result not found")
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
 @app.get("/download/{result_id}")
 async def download_result(result_id: str):
     path = RESULTS_DIR / f"{result_id}.srt"
     if not path.exists():
         raise HTTPException(404, "Result not found")
-    json_path = RESULTS_DIR / f"{result_id}.json"
-    if json_path.exists():
-        try:
-            data = json.loads(json_path.read_text(encoding="utf-8"))
-            orig = data.get("original_filename", "")
-            if orig:
-                download_name = f"{result_id}.srt"
-                return FileResponse(
-                    path,
-                    filename=download_name,
-                    media_type="application/x-subrip; charset=utf-8",
-                )
-        except Exception:
-            pass
     return FileResponse(
         path,
         filename=f"{result_id}.srt",

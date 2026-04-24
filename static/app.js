@@ -2,7 +2,6 @@
 let currentJobId = null;
 let ws = null;
 let currentResultId = null;
-let currentResultData = null;
 let reconnectCount = 0;
 const MAX_RECONNECT = 5;
 
@@ -47,7 +46,7 @@ async function uploadFile(file) {
   $('resultsPanel').hidden = true;
   $('jobPanel').hidden = false;
   $('activeFilename').textContent = file.name;
-  setStatus('Uploading', 'active');
+  setStatus('Processing', 'active');
   $('progressFill').style.width = '0%';
   $('progressFill').classList.remove('error');
   $('progressPct').textContent = '0%';
@@ -56,6 +55,7 @@ async function uploadFile(file) {
 
   const formData = new FormData();
   formData.append('file', file);
+  formData.append('model', $('modelSelect').value);
 
   try {
     const res = await fetch('/upload', { method: 'POST', body: formData });
@@ -110,7 +110,7 @@ function handleProgress(data) {
     currentResultId = data.result_id;
     currentJobId = null;
     if (ws) ws.close();
-    loadAndShowResults(data.result_id);
+    showResults(data);
   }
 }
 
@@ -142,20 +142,16 @@ function setStatus(text, state) {
 }
 
 // === Results ===
-async function loadAndShowResults(resultId) {
-  try {
-    const res = await fetch('/result/' + resultId);
-    if (!res.ok) return;
-    currentResultData = await res.json();
-    showResults(currentResultData);
-  } catch (e) { console.error(e); }
-}
-
 function showResults(data) {
-  $('resultFilename').textContent = data.original_filename || data.id;
-  $('resultLang').textContent = data.detected_language || 'unknown';
-  $('resultTime').textContent = new Date(data.timestamp).toLocaleString();
-  $('resultText').textContent = data.transcription || '(no transcription)';
+  $('resultFilename').textContent = data.filename || data.result_id;
+  $('resultLang').textContent = data.language || 'unknown';
+  $('resultModel').textContent = data.model_name || '';
+  $('resultTime').textContent = new Date().toLocaleString();
+  $('resultText').textContent = data.text || '(no transcription)';
+  $('modelBadge').textContent = data.model_name || '';
+  $('footerCredit').textContent = data.model_name
+    ? `Transcribed with ${data.model_name} · All processing done locally`
+    : 'All processing done locally';
   $('resultsPanel').hidden = false;
   $('jobPanel').hidden = true;
   $('resultsPanel').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -164,7 +160,6 @@ function showResults(data) {
 // === Download SRT ===
 function downloadResult() {
   if (!currentResultId) return;
-  // Navigate to the download endpoint — browser uses the Content-Disposition filename
   window.location.href = '/download/' + currentResultId;
 }
 

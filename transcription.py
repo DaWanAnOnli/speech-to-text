@@ -1,4 +1,4 @@
-import os, subprocess, asyncio, json, uuid
+import os, subprocess, asyncio, json, uuid, time
 from pathlib import Path
 from typing import Optional, Callable, Dict, List
 from datetime import datetime
@@ -7,61 +7,138 @@ import torch
 
 from config import RESULTS_DIR, UPLOADS_DIR, MODEL_NAME, DTYPE, CHUNK_DURATION_SEC, FORCE_ALIGNER_NAME
 
-# === Singleton model manager ===
+# === Supported models ===
 
-_model_instance = None
+SUPPORTED_MODELS = {
+    "qwen": {
+        "display_name": "Qwen3-ASR-1.7B",
+        "hf_name": "Qwen/Qwen3-ASR-1.7B",
+    },
+    "whisper": {
+        "display_name": "Whisper-large-v3",
+        "hf_name": "openai/whisper-large-v3",
+    },
+}
+
+# === Model pool with idle eviction ===
+
+_loaded_models: dict[str, object] = {}
+_model_last_used: dict[str, float] = {}
 _model_lock = asyncio.Lock()
+_IDLE_TIMEOUT_SEC = 30 * 60
 
 
 async def load_model(
-    progress_callback: Optional[Callable] = None
+    model_key: str,
+    progress_callback: Optional[Callable] = None,
 ):
-    global _model_instance
+    global _loaded_models, _model_last_used
+
     async with _model_lock:
-        if _model_instance is not None:
-            return _model_instance
+        if model_key in _loaded_models:
+            _model_last_used[model_key] = time.time()
+            return _loaded_models[model_key]
+
+        cfg = SUPPORTED_MODELS[model_key]
 
         if progress_callback:
             await progress_callback({
                 "stage": "loading_model",
-                "message": "Loading Qwen3-ASR model...",
-                "progress": 0
+                "message": f"Loading {cfg['display_name']}...",
+                "progress": 0,
             })
 
-        from qwen_asr import Qwen3ASRModel
-        from config import DTYPE, MAX_NEW_TOKENS
+        if model_key == "qwen":
+            model = await _load_qwen_model(cfg, progress_callback)
+        elif model_key == "whisper":
+            model = await _load_whisper_model(cfg, progress_callback)
+        else:
+            raise ValueError(f"Unknown model key: {model_key}")
 
-        if progress_callback:
-            await progress_callback({
-                "stage": "loading_model",
-                "message": "Initializing model...",
-                "progress": 50
-            })
-
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        dtype = getattr(torch, DTYPE, torch.bfloat16) if device == "cuda" else torch.float32
-
-        _model_instance = Qwen3ASRModel.from_pretrained(
-            MODEL_NAME,
-            dtype=dtype,
-            device_map=device,
-            max_new_tokens=MAX_NEW_TOKENS,
-            forced_aligner=FORCE_ALIGNER_NAME,
-            forced_aligner_kwargs=dict(dtype=dtype, device_map=device),
-        )
-
-        if progress_callback:
-            await progress_callback({
-                "stage": "loading_model",
-                "message": "Model ready",
-                "progress": 100
-            })
-
-        return _model_instance
+        _loaded_models[model_key] = model
+        _model_last_used[model_key] = time.time()
+        return model
 
 
-def get_model():
-    return _model_instance
+def get_model(model_key: str):
+    return _loaded_models.get(model_key)
+
+
+# === Idle eviction loop ===
+
+async def _eviction_loop():
+    while True:
+        await asyncio.sleep(300)
+        now = time.time()
+        async with _model_lock:
+            for key in list(_loaded_models.keys()):
+                if now - _model_last_used.get(key, 0) > _IDLE_TIMEOUT_SEC:
+                    del _loaded_models[key]
+                    del _model_last_used[key]
+
+
+# === Model loaders ===
+
+async def _load_qwen_model(
+    cfg: dict,
+    progress_callback: Optional[Callable] = None,
+):
+    from qwen_asr import Qwen3ASRModel
+    from config import DTYPE, MAX_NEW_TOKENS
+
+    if progress_callback:
+        await progress_callback({
+            "stage": "loading_model",
+            "message": "Initializing model...",
+            "progress": 50,
+        })
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    dtype = getattr(torch, DTYPE, torch.bfloat16) if device == "cuda" else torch.float32
+
+    model = Qwen3ASRModel.from_pretrained(
+        cfg["hf_name"],
+        dtype=dtype,
+        device_map=device,
+        max_new_tokens=MAX_NEW_TOKENS,
+        forced_aligner=FORCE_ALIGNER_NAME,
+        forced_aligner_kwargs=dict(dtype=dtype, device_map=device),
+    )
+
+    if progress_callback:
+        await progress_callback({
+            "stage": "loading_model",
+            "message": "Model ready",
+            "progress": 100,
+        })
+
+    return model
+
+
+async def _load_whisper_model(
+    cfg: dict,
+    progress_callback: Optional[Callable] = None,
+):
+    import whisper_timestamped as whisper
+
+    if progress_callback:
+        await progress_callback({
+            "stage": "loading_model",
+            "message": "Initializing Whisper...",
+            "progress": 50,
+        })
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model = whisper.load_model("large-v3", device=device)
+
+    if progress_callback:
+        await progress_callback({
+            "stage": "loading_model",
+            "message": "Model ready",
+            "progress": 100,
+        })
+
+    return model
 
 
 # === FFmpeg helpers ===
@@ -141,6 +218,7 @@ async def transcribe_file(
     file_path: str,
     original_filename: str,
     job_id: str,
+    model_key: str = "qwen",
     progress_callback: Optional[Callable] = None,
 ) -> Dict:
     temp_wav = UPLOADS_DIR / f"{job_id}_converted.wav"
@@ -163,7 +241,7 @@ async def transcribe_file(
         })
 
     # ---- Stage 2: Load Model ----
-    model = await load_model(progress_callback)
+    model = await load_model(model_key, progress_callback)
 
     # ---- Stage 3: Chunked Transcription ----
     if progress_callback:
@@ -185,9 +263,14 @@ async def transcribe_file(
         start_sec = chunk_idx * chunk_sec
         end_sec = min((chunk_idx + 1) * chunk_sec, duration)
 
-        chunk_text, chunk_lang, chunk_segments = await _transcribe_chunk(
-            model, str(temp_wav), start_sec, end_sec
-        )
+        if model_key == "qwen":
+            chunk_text, chunk_lang, chunk_segments = await _transcribe_chunk_qwen(
+                model, str(temp_wav), start_sec, end_sec
+            )
+        else:
+            chunk_text, chunk_lang, chunk_segments = await _transcribe_chunk_whisper(
+                model, str(temp_wav), start_sec, end_sec
+            )
 
         if chunk_text.strip():
             all_texts.append(chunk_text)
@@ -217,26 +300,10 @@ async def transcribe_file(
 
     timestamp = datetime.now().isoformat()
     safe_name = Path(original_filename).stem.replace(" ", "_")
-    result_id = f"{safe_name}_{job_id[:8]}"
+    result_id = f"{safe_name}_{job_id[:8]}_{model_key}"
 
     srt_path = RESULTS_DIR / f"{result_id}.srt"
     srt_path.write_text(segments_to_srt(all_segments), encoding="utf-8")
-
-    json_data = {
-        "id": result_id,
-        "original_filename": original_filename,
-        "transcription": full_text,
-        "detected_language": detected_language or "unknown",
-        "timestamp": timestamp,
-        "duration_seconds": round(duration, 2),
-        "chunks_processed": total_chunks,
-        "segments": all_segments,
-    }
-    json_path = RESULTS_DIR / f"{result_id}.json"
-    json_path.write_text(
-        json.dumps(json_data, indent=2, ensure_ascii=False),
-        encoding="utf-8"
-    )
 
     if progress_callback:
         await progress_callback({
@@ -251,27 +318,36 @@ async def transcribe_file(
     except OSError:
         pass
 
+    display_name = SUPPORTED_MODELS[model_key]["display_name"]
+
     if progress_callback:
         await progress_callback({
             "stage": "complete",
             "message": "Transcription complete",
             "progress": 100,
             "result_id": result_id,
+            "filename": original_filename,
             "text": full_text,
             "language": detected_language,
+            "model_key": model_key,
+            "model_name": display_name,
         })
 
     return {
         "id": result_id,
+        "filename": original_filename,
         "text": full_text,
         "language": detected_language,
         "timestamp": timestamp,
+        "model_key": model_key,
+        "model_name": display_name,
         "srt_path": str(srt_path),
-        "json_path": str(json_path),
     }
 
 
-async def _transcribe_chunk(
+# === Qwen chunk transcription ===
+
+async def _transcribe_chunk_qwen(
     model,
     wav_path: str,
     start_sec: float,
@@ -308,6 +384,52 @@ async def _transcribe_chunk(
                     })
 
             return str(text), lang, segments
+        finally:
+            try:
+                chunk_file.unlink()
+            except OSError:
+                pass
+
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, _run)
+
+
+# === Whisper chunk transcription ===
+
+async def _transcribe_chunk_whisper(
+    model,
+    wav_path: str,
+    start_sec: float,
+    end_sec: float,
+) -> tuple[str, Optional[str], List[dict]]:
+    def _run() -> tuple[str, Optional[str], List[dict]]:
+        import whisper_timestamped as whisper
+
+        chunk_id = uuid.uuid4().hex
+        chunk_file = UPLOADS_DIR / f"chunk_{chunk_id}.wav"
+        try:
+            subprocess.run([
+                "ffmpeg", "-y", "-i", wav_path,
+                "-ss", str(start_sec), "-to", str(end_sec),
+                "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le",
+                str(chunk_file)
+            ], capture_output=True, text=True)
+
+            audio = whisper.load_audio(str(chunk_file))
+            result = whisper.transcribe(model, audio, language=None)
+
+            segments: List[dict] = []
+            for seg in result.get("segments", []):
+                seg_text = seg.get("text", "").strip()
+                if seg_text:
+                    segments.append({
+                        "text": seg_text,
+                        "start": start_sec + (seg.get("begin", 0) or 0) / 1000.0,
+                        "end": start_sec + (seg.get("end", 0) or 0) / 1000.0,
+                    })
+
+            text = " ".join(s["text"] for s in segments)
+            return text, result.get("language"), segments
         finally:
             try:
                 chunk_file.unlink()
