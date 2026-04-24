@@ -12,7 +12,7 @@ from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from config import (RESULTS_DIR, UPLOADS_DIR, MAX_FILE_SIZE_BYTES,
-    ENABLE_NOISE_REDUCTION, ENABLE_AUDIO_ENHANCEMENT)
+    ENABLE_NOISE_REDUCTION, ENABLE_AUDIO_ENHANCEMENT, MAX_CONCURRENT_JOBS)
 from transcription import transcribe_file, SUPPORTED_MODELS, _eviction_loop
 
 
@@ -67,6 +67,7 @@ class ConnectionManager:
             await ws.send_json(data)
 
 manager = ConnectionManager()
+_active_job_semaphore = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
 
 
 # === Allowed file extensions ===
@@ -163,6 +164,28 @@ async def run_transcription(job_id: str, file_path: str, filename: str,
     async def progress_callback(data: dict):
         await manager.send(job_id, data)
 
+    # --- Concurrency control ---
+    queued_notified = False
+    while True:
+        try:
+            _active_job_semaphore.acquire_nowait()
+            break
+        except ValueError:
+            if not queued_notified:
+                queued_notified = True
+                await manager.send(job_id, {
+                    "stage": "queued",
+                    "message": "Waiting for a GPU slot...",
+                    "progress": 0
+                })
+            await asyncio.sleep(1)
+
+    await manager.send(job_id, {
+        "stage": "queued_starting",
+        "message": "Starting transcription...",
+        "progress": 0
+    })
+
     try:
         await transcribe_file(file_path, filename, job_id, model_key,
                               enable_noise_reduction, enable_audio_enhancement,
@@ -178,6 +201,7 @@ async def run_transcription(job_id: str, file_path: str, filename: str,
             Path(file_path).unlink()
         except OSError:
             pass
+        _active_job_semaphore.release()
 
 
 @app.websocket("/ws/{job_id}")

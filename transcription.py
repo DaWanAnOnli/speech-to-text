@@ -13,6 +13,18 @@ from config import (RESULTS_DIR, UPLOADS_DIR, MODEL_NAME, DTYPE, CHUNK_DURATION_
     FORCE_ALIGNER_NAME, ENABLE_NOISE_REDUCTION, ENABLE_AUDIO_ENHANCEMENT,
     NOISE_REDUCTION_MODEL, ENHANCEMENT_MODEL)
 
+
+def _check_gpu_memory(required_gb: float = 4.0) -> None:
+    if torch.cuda.is_available():
+        used = torch.cuda.memory_allocated() / (1024 ** 3)
+        total = torch.cuda.get_device_properties(0).total_mem / (1024 ** 3)
+        if used + required_gb > total * 0.9:
+            raise RuntimeError(
+                f"GPU memory nearly exhausted. Used: {used:.1f}GB / "
+                f"Total: {total:.1f}GB. Wait for running jobs to finish."
+            )
+
+
 # === Supported models ===
 
 SUPPORTED_MODELS = {
@@ -316,6 +328,8 @@ async def transcribe_file(
     enable_audio_enhancement: bool = None,
     progress_callback: Optional[Callable] = None,
 ) -> Dict:
+    _check_gpu_memory()
+
     # Resolve None defaults to config values
     if enable_noise_reduction is None:
         enable_noise_reduction = ENABLE_NOISE_REDUCTION

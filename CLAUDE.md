@@ -110,6 +110,7 @@ curl -X POST \
 | `STT_ENABLE_AUDIO_ENHANCEMENT` | `true` | Enable MetricGAN+ enhancement by default |
 | `STT_NOISE_REDUCTION_MODEL` | `speechbrain/sepformer-wham16k-enhancement` | HuggingFace model for noise reduction |
 | `STT_ENHANCEMENT_MODEL` | `speechbrain/metricgan-plus-voicebank` | HuggingFace model for audio enhancement |
+| `STT_MAX_CONCURRENT_JOBS` | `2` | Max simultaneous transcription jobs on GPU (to prevent OOM) |
 
 ## Key Implementation Notes
 
@@ -123,6 +124,8 @@ curl -X POST \
 - **Progress via WebSocket**: each upload gets a `job_id`; client connects to `/ws/{job_id}` for live stage updates.
 - **No history**: no persistence between sessions — SRT files are cleaned up after 24 hours.
 - **Enhancement is non-fatal**: if enhancement fails, the pipeline logs a warning and continues with the original (non-enhanced) audio.
+- **Parallel multi-file processing**: multiple files can be uploaded simultaneously (file input has `multiple` attribute, drag-drop accepts multiple files). Each upload gets its own job card with independent progress. The server enforces a concurrency limit of `MAX_CONCURRENT_JOBS` (default 2) via a semaphore — excess uploads queue indefinitely and receive `queued` stage messages until a slot frees up. Each job card has a remove (X) button and a download button (on completion).
+- **GPU memory guard**: `_check_gpu_memory()` is called at the start of each transcription. If GPU memory is nearly exhausted, it raises `RuntimeError`, which is caught by `run_transcription` and sent as an `error` stage to the frontend. This prevents OOM crashes on long files.
 
 ## WebSocket Protocol
 
@@ -130,6 +133,8 @@ Server sends JSON messages with these shapes:
 
 | Stage | Progress | Keys |
 |---|---|---|
+| `queued` | 0 | `stage`, `message`, `progress` — sent when job is accepted but no GPU slot available |
+| `queued_starting` | 0 | `stage`, `message`, `progress` — sent when GPU slot acquired and transcription begins |
 | `loading_model` | 0→100 | `stage`, `message`, `progress` |
 | `converting` | 5→15 | `stage`, `message`, `progress` |
 | `noise_reducing` | 16→35 | `stage`, `message`, `progress` (only if enabled) |

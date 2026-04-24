@@ -61,3 +61,6 @@ print('MetricGAN+ cached')
 echo "Setup complete."
 echo "Activate venv: source venv/bin/activate"
 echo "Start server: python main.py"
+echo ""
+echo "Optional environment variables:"
+echo "  STT_MAX_CONCURRENT_JOBS  Max simultaneous GPU jobs (default: 2, set to 1 for max safety)"

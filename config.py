@@ -21,6 +21,7 @@ ENABLE_NOISE_REDUCTION = os.getenv("STT_ENABLE_NOISE_REDUCTION", "true").lower()
 ENABLE_AUDIO_ENHANCEMENT = os.getenv("STT_ENABLE_AUDIO_ENHANCEMENT", "true").lower() in ("true", "1", "yes")
 NOISE_REDUCTION_MODEL = os.getenv("STT_NOISE_REDUCTION_MODEL", "speechbrain/sepformer-wham16k-enhancement")
 ENHANCEMENT_MODEL = os.getenv("STT_ENHANCEMENT_MODEL", "speechbrain/metricgan-plus-voicebank")
+MAX_CONCURRENT_JOBS = int(os.getenv("STT_MAX_CONCURRENT_JOBS", "2"))
 
 for d in [RESULTS_DIR, UPLOADS_DIR]:
     d.mkdir(parents=True, exist_ok=True)

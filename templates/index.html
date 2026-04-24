@@ -53,6 +53,9 @@
         </label>
       </div>
 
+      <!-- Dynamic Jobs List -->
+      <section class="jobs-list" id="jobsList" hidden></section>
+
       <!-- Upload Section -->
       <section class="upload-section" id="uploadSection">
         <div class="drop-zone" id="dropZone" role="button" tabindex="0"
@@ -81,112 +84,9 @@
             </div>
           </div>
           <input type="file" id="fileInput"
-                 accept=".mp3,.wav,.m4a,.flac,.ogg,.mp4,.webm,.avi,.mov,.mkv,.wma,.aac" hidden />
+                 accept=".mp3,.wav,.m4a,.flac,.ogg,.mp4,.webm,.avi,.mov,.mkv,.wma,.aac" multiple hidden />
         </div>
       </section>
-
-      <!-- Processing Panel -->
-      <section class="card panel panel--job" id="jobPanel" hidden>
-        <div class="panel-top">
-          <div class="panel-info">
-            <div class="panel-filename" id="activeFilename">—</div>
-            <div class="panel-status-row">
-              <span class="status-dot status-dot--active" id="statusDot"></span>
-              <span class="panel-status" id="statusBadge">Processing</span>
-            </div>
-          </div>
-          <div class="panel-actions">
-            <span class="panel-message" id="jobMessage">Initializing...</span>
-          </div>
-        </div>
-
-        <!-- Step Indicator -->
-        <div class="stepper" id="stepper">
-          <div class="step" data-step="loading_model">
-            <div class="step-indicator">
-              <div class="step-dot"></div>
-              <div class="step-line"></div>
-            </div>
-            <span class="step-label">Model</span>
-          </div>
-          <div class="step" data-step="converting">
-            <div class="step-indicator">
-              <div class="step-dot"></div>
-              <div class="step-line"></div>
-            </div>
-            <span class="step-label">Convert</span>
-          </div>
-          <div class="step" data-step="noise_reducing">
-            <div class="step-indicator">
-              <div class="step-dot"></div>
-              <div class="step-line"></div>
-            </div>
-            <span class="step-label">Denoise</span>
-          </div>
-          <div class="step" data-step="enhancing">
-            <div class="step-indicator">
-              <div class="step-dot"></div>
-              <div class="step-line"></div>
-            </div>
-            <span class="step-label">Enhance</span>
-          </div>
-          <div class="step" data-step="transcribing">
-            <div class="step-indicator">
-              <div class="step-dot"></div>
-              <div class="step-line"></div>
-            </div>
-            <span class="step-label">Transcribe</span>
-          </div>
-          <div class="step" data-step="saving">
-            <div class="step-indicator">
-              <div class="step-dot"></div>
-              <div class="step-line"></div>
-            </div>
-            <span class="step-label">Save</span>
-          </div>
-          <div class="step" data-step="complete">
-            <div class="step-indicator">
-              <div class="step-dot"></div>
-            </div>
-            <span class="step-label">Done</span>
-          </div>
-        </div>
-
-        <!-- Progress Bar -->
-        <div class="progress-wrap">
-          <div class="progress-bar">
-            <div class="progress-fill" id="progressFill"></div>
-          </div>
-          <span class="progress-pct" id="progressPct">0%</span>
-        </div>
-      </section>
-
-      <!-- Results Panel -->
-      <section class="card panel panel--results" id="resultsPanel" hidden>
-        <div class="panel-top">
-          <div class="panel-info">
-            <div class="panel-filename-lg" id="resultFilename">—</div>
-            <div class="meta-row">
-              <span class="meta-badge meta-badge--lang" id="resultLang">—</span>
-              <span class="meta-sep">·</span>
-              <span class="meta-badge meta-badge--model" id="resultModel">—</span>
-              <span class="meta-sep">·</span>
-              <span class="meta-text" id="resultTime">—</span>
-            </div>
-          </div>
-          <div class="panel-actions">
-            <button class="btn btn--primary" onclick="downloadResult()">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                <polyline points="7 10 12 15 17 10" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                <line x1="12" y1="15" x2="12" y2="3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-              </svg>
-              Download
-            </button>
-          </div>
-        </div>
-        <div class="transcript-body" id="resultText" tabindex="0"
-             aria-label="Transcription result"></div>
     </main>
 
     <!-- Footer -->

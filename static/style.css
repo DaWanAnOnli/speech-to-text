@@ -171,6 +171,57 @@ a:hover { text-decoration: underline; }
    ============================================= */
 .upload-section { margin-bottom: 24px; }
 
+/* === Jobs List (dynamic cards) === */
+.jobs-list {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+@media (min-width: 640px) {
+  .jobs-list {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.jobs-list:empty {
+  display: none;
+}
+
+/* === Status dot states === */
+.status-dot--queued {
+  background: #f59e0b;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+/* === Remove button === */
+.btn--icon {
+  background: none;
+  border: none;
+  padding: 4px;
+  cursor: pointer;
+  color: var(--text-tertiary);
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn--icon:hover {
+  color: var(--error);
+  background: var(--error-light);
+}
+
+/* === Card actions (download area) === */
+.card-actions {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: flex-end;
+}
+
 /* =============================================
    Enhancement Toggles
    ============================================= */
