@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Speech to Text — Qwen3-ASR</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+
+  <div class="page">
+
+    <!-- Navbar -->
+    <nav class="navbar">
+      <div class="navbar-brand">
+        <svg class="brand-icon" width="28" height="28" viewBox="0 0 28 28" fill="none">
+          <rect width="28" height="28" rx="7" fill="#2563eb"/>
+          <path d="M8 10.5C8 9.12 9.12 8 10.5 8H17.5C18.88 8 20 9.12 20 10.5V17.5C20 18.88 18.88 20 17.5 20H10.5C9.12 20 8 18.88 8 17.5V10.5Z" stroke="white" stroke-width="1.5"/>
+          <circle cx="11.5" cy="11.5" r="1.5" fill="white"/>
+          <path d="M8 14.5H20" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
+          <circle cx="14" cy="17" r="1" fill="white" opacity="0.7"/>
+        </svg>
+        <span class="brand-name">Speech to Text</span>
+      </div>
+      <div class="navbar-meta">
+        <span class="model-badge">Qwen3-ASR-1.7B</span>
+      </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="main">
+
+      <!-- Upload Section -->
+      <section class="upload-section" id="uploadSection">
+        <div class="drop-zone" id="dropZone" role="button" tabindex="0"
+             aria-label="Upload audio or video file">
+          <div class="drop-zone-inner">
+            <div class="drop-icon-wrap">
+              <svg width="40" height="40" viewBox="0 0 24 24" fill="none">
+                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" stroke="#9ca3af" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                <polyline points="17 8 12 3 7 8" stroke="#9ca3af" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                <line x1="12" y1="3" x2="12" y2="15" stroke="#9ca3af" stroke-width="1.5" stroke-linecap="round"/>
+              </svg>
+            </div>
+            <p class="drop-title">Drop an audio or video file</p>
+            <p class="drop-sub">or <button class="link-btn" onclick="document.getElementById('fileInput').click()">click to browse</button></p>
+            <div class="format-row">
+              <span class="format-pill">MP3</span>
+              <span class="format-pill">WAV</span>
+              <span class="format-pill">M4A</span>
+              <span class="format-pill">FLAC</span>
+              <span class="format-pill">OGG</span>
+              <span class="format-pill">MP4</span>
+              <span class="format-pill">WEBM</span>
+              <span class="format-pill">AVI</span>
+              <span class="format-pill">MOV</span>
+              <span class="format-pill">MKV</span>
+            </div>
+          </div>
+          <input type="file" id="fileInput"
+                 accept=".mp3,.wav,.m4a,.flac,.ogg,.mp4,.webm,.avi,.mov,.mkv,.wma,.aac" hidden />
+        </div>
+      </section>
+
+      <!-- Processing Panel -->
+      <section class="card panel panel--job" id="jobPanel" hidden>
+        <div class="panel-top">
+          <div class="panel-info">
+            <div class="panel-filename" id="activeFilename">—</div>
+            <div class="panel-status-row">
+              <span class="status-dot status-dot--active" id="statusDot"></span>
+              <span class="panel-status" id="statusBadge">Processing</span>
+            </div>
+          </div>
+          <div class="panel-actions">
+            <span class="panel-message" id="jobMessage">Initializing...</span>
+          </div>
+        </div>
+
+        <!-- Step Indicator -->
+        <div class="stepper" id="stepper">
+          <div class="step" data-step="loading_model">
+            <div class="step-indicator">
+              <div class="step-dot"></div>
+              <div class="step-line"></div>
+            </div>
+            <span class="step-label">Model</span>
+          </div>
+          <div class="step" data-step="converting">
+            <div class="step-indicator">
+              <div class="step-dot"></div>
+              <div class="step-line"></div>
+            </div>
+            <span class="step-label">Convert</span>
+          </div>
+          <div class="step" data-step="transcribing">
+            <div class="step-indicator">
+              <div class="step-dot"></div>
+              <div class="step-line"></div>
+            </div>
+            <span class="step-label">Transcribe</span>
+          </div>
+          <div class="step" data-step="saving">
+            <div class="step-indicator">
+              <div class="step-dot"></div>
+              <div class="step-line"></div>
+            </div>
+            <span class="step-label">Save</span>
+          </div>
+          <div class="step" data-step="complete">
+            <div class="step-indicator">
+              <div class="step-dot"></div>
+            </div>
+            <span class="step-label">Done</span>
+          </div>
+        </div>
+
+        <!-- Progress Bar -->
+        <div class="progress-wrap">
+          <div class="progress-bar">
+            <div class="progress-fill" id="progressFill"></div>
+          </div>
+          <span class="progress-pct" id="progressPct">0%</span>
+        </div>
+      </section>
+
+      <!-- Results Panel -->
+      <section class="card panel panel--results" id="resultsPanel" hidden>
+        <div class="panel-top">
+          <div class="panel-info">
+            <div class="panel-filename-lg" id="resultFilename">—</div>
+            <div class="meta-row">
+              <span class="meta-badge meta-badge--lang" id="resultLang">—</span>
+              <span class="meta-sep">·</span>
+              <span class="meta-text" id="resultTime">—</span>
+            </div>
+          </div>
+          <div class="panel-actions">
+            <button class="btn btn--primary" onclick="downloadResult()">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                <polyline points="7 10 12 15 17 10" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                <line x1="12" y1="15" x2="12" y2="3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+              Download
+            </button>
+          </div>
+        </div>
+        <div class="transcript-body" id="resultText" tabindex="0"
+             aria-label="Transcription result"></div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <span>Powered by <a href="https://huggingface.co/Qwen/Qwen3-ASR-1.7B" target="_blank" rel="noopener">Qwen3-ASR-1.7B</a> · All processing done locally</span>
+    </footer>
+
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
