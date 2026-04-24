@@ -185,10 +185,10 @@ async def run_transcription(job_id: str, file_path: str, filename: str,
             transcribe_file(file_path, filename, job_id, model_key,
                             enable_noise_reduction, enable_audio_enhancement,
                             progress_callback),
-            timeout=300
+            timeout=30
         )
     except asyncio.TimeoutError:
-        logger.exception(f"[{job_id[:8]}] Transcription timed out after 300s")
+        logger.exception(f"[{job_id[:8]}] Transcription timed out after 30s")
         await manager.send(job_id, {
             "stage": "error",
             "message": "Transcription timed out after 300 seconds",
