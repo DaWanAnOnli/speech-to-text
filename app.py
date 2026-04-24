@@ -1,6 +1,8 @@
-import uuid, asyncio, time
+import uuid, asyncio, time, logging
 from pathlib import Path
 from contextlib import asynccontextmanager
+
+logger = logging.getLogger("speech-to-text")
 
 from fastapi import (
     FastAPI, UploadFile, File, HTTPException,
@@ -141,6 +143,23 @@ async def run_transcription(job_id: str, file_path: str, filename: str,
                             model_key: str = "qwen",
                             enable_noise_reduction: bool = None,
                             enable_audio_enhancement: bool = None):
+    from transcription import SUPPORTED_MODELS
+
+    model_name = SUPPORTED_MODELS[model_key]["display_name"]
+    enh_parts = []
+    if enable_noise_reduction:
+        enh_parts.append("noise_reduction")
+    if enable_audio_enhancement:
+        enh_parts.append("audio_enhancement")
+    enh_active = ", ".join(enh_parts) if enh_parts else "none"
+
+    logger.info(
+        f"[{job_id[:8]}] Starting transcription | "
+        f"model={model_name} | "
+        f"enhancements={enh_active} | "
+        f"file={filename}"
+    )
+
     async def progress_callback(data: dict):
         await manager.send(job_id, data)
 
