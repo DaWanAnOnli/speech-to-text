@@ -171,6 +171,38 @@ a:hover { text-decoration: underline; }
    ============================================= */
 .upload-section { margin-bottom: 24px; }
 
+/* =============================================
+   Enhancement Toggles
+   ============================================= */
+.enhancement-toggles {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.toggle-label input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.toggle-label:hover span {
+  color: var(--text-primary);
+}
+
 .drop-zone {
   border: 1.5px dashed var(--border-strong);
   border-radius: var(--radius-lg);
