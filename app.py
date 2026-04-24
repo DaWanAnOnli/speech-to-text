@@ -165,21 +165,13 @@ async def run_transcription(job_id: str, file_path: str, filename: str,
         await manager.send(job_id, data)
 
     # --- Concurrency control ---
-    queued_notified = False
-    while True:
-        try:
-            # Try non-blocking acquire (timeout=0 raises TimeoutError if unavailable)
-            await asyncio.wait_for(_active_job_semaphore.acquire(), timeout=0)
-            break
-        except asyncio.TimeoutError:
-            if not queued_notified:
-                queued_notified = True
-                await manager.send(job_id, {
-                    "stage": "queued",
-                    "message": "Waiting for a GPU slot...",
-                    "progress": 0
-                })
-            await asyncio.sleep(1)
+    if _active_job_semaphore.locked():
+        await manager.send(job_id, {
+            "stage": "queued",
+            "message": "Waiting for a GPU slot...",
+            "progress": 0
+        })
+    await _active_job_semaphore.acquire()
 
     await manager.send(job_id, {
         "stage": "queued_starting",
