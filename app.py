@@ -136,7 +136,6 @@ async def upload_file(
         run_transcription(job_id, str(temp_path), file.filename or "unknown",
                          model, noise_reduction_flag, enhancement_flag)
     )
-    logger.info(f"[{job_id[:8]}] Task created for {file.filename}")
 
     return {"job_id": job_id, "filename": file.filename}
 
@@ -145,8 +144,6 @@ async def run_transcription(job_id: str, file_path: str, filename: str,
                             model_key: str = "qwen",
                             enable_noise_reduction: bool = None,
                             enable_audio_enhancement: bool = None):
-    print(f"[{job_id[:8]}] run_transcription STARTED")  # DEBUG
-    import sys
     from transcription import SUPPORTED_MODELS
 
     model_name = SUPPORTED_MODELS[model_key]["display_name"]
@@ -165,71 +162,50 @@ async def run_transcription(job_id: str, file_path: str, filename: str,
     )
 
     async def progress_callback(data: dict):
-        print(f"[{job_id[:8]}] progress_callback: sending {data.get('stage')}")  # DEBUG
         await manager.send(job_id, data)
-        print(f"[{job_id[:8]}] progress_callback: sent {data.get('stage')}")  # DEBUG
 
     # --- Concurrency control ---
-    print(f"[{job_id[:8]}] About to acquire semaphore")  # DEBUG
     if _active_job_semaphore.locked():
-        print(f"[{job_id[:8]}] Semaphore locked, sending queued")  # DEBUG
         await manager.send(job_id, {
             "stage": "queued",
             "message": "Waiting for a GPU slot...",
             "progress": 0
         })
-    print(f"[{job_id[:8]}] Acquiring semaphore...")  # DEBUG
     await _active_job_semaphore.acquire()
-    print(f"[{job_id[:8]}] Semaphore acquired!")  # DEBUG
 
-    print(f"[{job_id[:8]}] Sending queued_starting...")  # DEBUG
     await manager.send(job_id, {
         "stage": "queued_starting",
         "message": "Starting transcription...",
         "progress": 0
     })
-    print(f"[{job_id[:8]}] queued_starting sent, about to call transcribe_file")  # DEBUG
-    sys.stdout.flush()
 
-    # Wrap in a timeout so we get a traceback if it hangs
     try:
-        print(f"[{job_id[:8]}] About to await transcribe_file")  # DEBUG
-        sys.stdout.flush()
         await asyncio.wait_for(
             transcribe_file(file_path, filename, job_id, model_key,
                             enable_noise_reduction, enable_audio_enhancement,
                             progress_callback),
-            timeout=30
+            timeout=600
         )
-        print(f"[{job_id[:8]}] transcribe_file completed normally")  # DEBUG
     except asyncio.TimeoutError:
-        print(f"[{job_id[:8]}] TIMEOUT after 30s!", flush=True)
-        import traceback
-        traceback.print_stack()
-        logger.warning(f"[{job_id[:8]}] Transcription timed out after 30s")
+        logger.exception(f"[{job_id[:8]}] Transcription timed out after 600s")
         await manager.send(job_id, {
             "stage": "error",
-            "message": "Transcription timed out after 30 seconds",
+            "message": "Transcription timed out after 10 minutes",
             "progress": 0
         })
     except Exception as exc:
-        print(f"[{job_id[:8]}] Exception: {exc}", flush=True)
-        import traceback
-        traceback.print_exc()
-        logger.exception(f"[{job_id[:8]}] Transcription raised exception")
+        logger.exception(f"[{job_id[:8]}] Transcription failed")
         await manager.send(job_id, {
             "stage": "error",
             "message": f"Transcription failed: {exc}",
             "progress": 0
         })
     finally:
-        print(f"[{job_id[:8]}] Cleaning up")  # DEBUG
         try:
             Path(file_path).unlink()
         except OSError:
             pass
         _active_job_semaphore.release()
-        print(f"[{job_id[:8]}] Done")  # DEBUG
 
 
 @app.websocket("/ws/{job_id}")

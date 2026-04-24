@@ -17,7 +17,7 @@ from config import (RESULTS_DIR, UPLOADS_DIR, MODEL_NAME, DTYPE, CHUNK_DURATION_
 def _check_gpu_memory(required_gb: float = 4.0) -> None:
     if torch.cuda.is_available():
         used = torch.cuda.memory_allocated() / (1024 ** 3)
-        total = torch.cuda.get_device_properties(0).total_mem / (1024 ** 3)
+        total = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
         if used + required_gb > total * 0.9:
             raise RuntimeError(
                 f"GPU memory nearly exhausted. Used: {used:.1f}GB / "
