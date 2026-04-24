@@ -9,8 +9,9 @@ from fastapi import (
 from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from config import RESULTS_DIR, UPLOADS_DIR, MAX_FILE_SIZE_BYTES
-from transcription import load_model, transcribe_file, SUPPORTED_MODELS, _eviction_loop
+from config import (RESULTS_DIR, UPLOADS_DIR, MAX_FILE_SIZE_BYTES,
+    ENABLE_NOISE_REDUCTION, ENABLE_AUDIO_ENHANCEMENT)
+from transcription import transcribe_file, SUPPORTED_MODELS, _eviction_loop
 
 
 # === Periodic cleanup ===
@@ -86,6 +87,8 @@ async def root():
 async def upload_file(
     file: UploadFile = File(...),
     model: str = Form(default="qwen"),
+    enable_noise_reduction: str = Form(default=None),
+    enable_audio_enhancement: str = Form(default=None),
 ):
     if model not in SUPPORTED_MODELS:
         raise HTTPException(
@@ -101,6 +104,18 @@ async def upload_file(
             f"Allowed: {', '.join(sorted(ALLOWED_EXTENSIONS))}"
         )
 
+    # Resolve per-request flags, falling back to server defaults
+    noise_reduction_flag = (
+        enable_noise_reduction.lower() in ("true", "1", "yes")
+        if enable_noise_reduction is not None
+        else ENABLE_NOISE_REDUCTION
+    )
+    enhancement_flag = (
+        enable_audio_enhancement.lower() in ("true", "1", "yes")
+        if enable_audio_enhancement is not None
+        else ENABLE_AUDIO_ENHANCEMENT
+    )
+
     job_id = uuid.uuid4().hex
     original_ext = Path(file.filename).suffix or f".{ext}"
     temp_path = UPLOADS_DIR / f"{job_id}_orig{original_ext}"
@@ -115,18 +130,24 @@ async def upload_file(
         f.write(content)
 
     asyncio.create_task(
-        run_transcription(job_id, str(temp_path), file.filename or "unknown", model)
+        run_transcription(job_id, str(temp_path), file.filename or "unknown",
+                         model, noise_reduction_flag, enhancement_flag)
     )
 
     return {"job_id": job_id, "filename": file.filename}
 
 
-async def run_transcription(job_id: str, file_path: str, filename: str, model_key: str = "qwen"):
+async def run_transcription(job_id: str, file_path: str, filename: str,
+                            model_key: str = "qwen",
+                            enable_noise_reduction: bool = None,
+                            enable_audio_enhancement: bool = None):
     async def progress_callback(data: dict):
         await manager.send(job_id, data)
 
     try:
-        await transcribe_file(file_path, filename, job_id, model_key, progress_callback)
+        await transcribe_file(file_path, filename, job_id, model_key,
+                              enable_noise_reduction, enable_audio_enhancement,
+                              progress_callback)
     except Exception as exc:
         await manager.send(job_id, {
             "stage": "error",

@@ -21,10 +21,18 @@ Windows (dev) --rsync/scp--> Ubuntu 24.04 server (GPU, e.g. RTX 5090)
                                         |
                               FastAPI backend + Vanilla HTML/JS frontend
                                         |
+                              FFmpeg: any format -> 16kHz mono WAV
+                                        |
+                              [Optional] MP-SENet-DNS: Noise Reduction
+                                        |
+                              [Optional] MetricGAN+: Audio Enhancement
+                                        |
                               Transcription model (Qwen3-ASR-1.7B or Whisper-large-v3)
-                              FFmpeg for audio/video conversion
+                                        |
                               WebSocket for real-time progress
 ```
+
+Enhancement stages are optional and independently controllable per-request.
 
 The Ubuntu server runs the FastAPI server. Windows users access it via browser at `http://<server-ip>:8000`.
 
@@ -93,16 +101,23 @@ curl -X POST -F "file=@audio.mp3" -F "model=qwen" http://<server-ip>:8000/upload
 | `STT_CHUNK_DURATION` | `30` | Audio chunk size in seconds |
 | `STT_MAX_NEW_TOKENS` | `256` | Max tokens per chunk (Qwen only) |
 | `STT_MAX_FILE_MB` | `10000` | Max upload file size in MB |
+| `STT_ENABLE_NOISE_REDUCTION` | `true` | Enable MP-SENet noise reduction by default |
+| `STT_ENABLE_AUDIO_ENHANCEMENT` | `true` | Enable MetricGAN+ enhancement by default |
+| `STT_NOISE_REDUCTION_MODEL` | `JacobLinCool/MP-SENet-DNS` | HuggingFace model for noise reduction |
+| `STT_ENHANCEMENT_MODEL` | `speechbrain/metricgan-plus-voicebank` | HuggingFace model for audio enhancement |
 
 ## Key Implementation Notes
 
-- **Model pool with idle eviction**: models load on first use, stay cached for 30 minutes of idle, then are evicted. Check runs every 5 minutes.
+- **Model pool with idle eviction**: transcription models load on first use, stay cached for 30 minutes of idle, then are evicted. Enhancement models are singletons loaded once and kept in memory.
 - **Model selection at upload time**: the frontend sends a `model` field with the upload. Both `qwen` and `whisper` are available.
+- **Per-request enhancement toggles**: the frontend sends `enable_noise_reduction` and `enable_audio_enhancement` fields with each upload (both default to `true`). The server falls back to env var defaults if not provided.
+- **Enhancement pipeline**: FFmpeg converts to 16kHz mono WAV, then optionally applies MP-SENet noise reduction and/or MetricGAN+ enhancement, then transcribes. Applied to the full file once before chunking.
 - **Filename includes model key**: result files are named `{original_stem}_{job_id}_{model_key}.srt` (e.g., `myfile_a1b2c3d4_qwen.srt`).
 - **SRT output only**: only `.srt` files are generated — no JSON sidecar.
 - **Chunked transcription**: audio split into 30s chunks, transcribed sequentially, progress reported per chunk via WebSocket.
 - **Progress via WebSocket**: each upload gets a `job_id`; client connects to `/ws/{job_id}` for live stage updates.
 - **No history**: no persistence between sessions — SRT files are cleaned up after 24 hours.
+- **Enhancement is non-fatal**: if enhancement fails, the pipeline logs a warning and continues with the original (non-enhanced) audio.
 
 ## WebSocket Protocol
 
@@ -112,8 +127,10 @@ Server sends JSON messages with these shapes:
 |---|---|---|
 | `loading_model` | 0→100 | `stage`, `message`, `progress` |
 | `converting` | 5→15 | `stage`, `message`, `progress` |
-| `transcribing` | 20→80 | `stage`, `message`, `progress`, `chunk`, `total_chunks` |
-| `saving` | 85→95 | `stage`, `message`, `progress` |
+| `noise_reducing` | 16→35 | `stage`, `message`, `progress` (only if enabled) |
+| `enhancing` | 16→35 | `stage`, `message`, `progress` (only if enabled) |
+| `transcribing` | 50→92 | `stage`, `message`, `progress`, `chunk`, `total_chunks` |
+| `saving` | 92→98 | `stage`, `message`, `progress` |
 | `complete` | 100 | `stage`, `message`, `progress`, `result_id`, `filename`, `text`, `language`, `model_key`, `model_name` |
 | `error` | 0 | `stage`, `message`, `progress` |
 
@@ -123,4 +140,4 @@ Server sends JSON messages with these shapes:
 - Uploaded files are deleted after transcription starts (`finally` block in `run_transcription`)
 - FFmpeg must be installed on the server (`apt install ffmpeg`)
 - Models are cached at `~/.cache/huggingface/` after first download
-- Qwen model + ForcedAligner cache: ~4.6GB; Whisper-large-v3 cache: ~3GB
+- Qwen model + ForcedAligner cache: ~4.6GB; Whisper-large-v3 cache: ~3GB; MP-SENet-DNS cache: ~300MB; MetricGAN+ cache: ~300MB

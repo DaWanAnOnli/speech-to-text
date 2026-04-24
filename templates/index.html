@@ -41,6 +41,18 @@
         </select>
       </div>
 
+      <!-- Enhancement Toggles -->
+      <div class="enhancement-toggles">
+        <label class="toggle-label">
+          <input type="checkbox" id="toggleNoiseReduction" checked />
+          <span>Noise Reduction</span>
+        </label>
+        <label class="toggle-label">
+          <input type="checkbox" id="toggleAudioEnhancement" checked />
+          <span>Audio Enhancement</span>
+        </label>
+      </div>
+
       <!-- Upload Section -->
       <section class="upload-section" id="uploadSection">
         <div class="drop-zone" id="dropZone" role="button" tabindex="0"
@@ -103,6 +115,20 @@
               <div class="step-line"></div>
             </div>
             <span class="step-label">Convert</span>
+          </div>
+          <div class="step" data-step="noise_reducing">
+            <div class="step-indicator">
+              <div class="step-dot"></div>
+              <div class="step-line"></div>
+            </div>
+            <span class="step-label">Denoise</span>
+          </div>
+          <div class="step" data-step="enhancing">
+            <div class="step-indicator">
+              <div class="step-dot"></div>
+              <div class="step-line"></div>
+            </div>
+            <span class="step-label">Enhance</span>
           </div>
           <div class="step" data-step="transcribing">
             <div class="step-indicator">

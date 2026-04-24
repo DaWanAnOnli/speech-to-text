@@ -17,5 +17,10 @@ MAX_NEW_TOKENS = int(os.getenv("STT_MAX_NEW_TOKENS", "256"))
 MAX_FILE_SIZE_MB = int(os.getenv("STT_MAX_FILE_MB", "10000"))
 MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 
+ENABLE_NOISE_REDUCTION = os.getenv("STT_ENABLE_NOISE_REDUCTION", "true").lower() in ("true", "1", "yes")
+ENABLE_AUDIO_ENHANCEMENT = os.getenv("STT_ENABLE_AUDIO_ENHANCEMENT", "true").lower() in ("true", "1", "yes")
+NOISE_REDUCTION_MODEL = os.getenv("STT_NOISE_REDUCTION_MODEL", "JacobLinCool/MP-SENet-DNS")
+ENHANCEMENT_MODEL = os.getenv("STT_ENHANCEMENT_MODEL", "speechbrain/metricgan-plus-voicebank")
+
 for d in [RESULTS_DIR, UPLOADS_DIR]:
     d.mkdir(parents=True, exist_ok=True)

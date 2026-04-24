@@ -29,12 +29,34 @@ pip install -r requirements.txt
 # 8. Create working directories
 mkdir -p results uploads
 
-# 9. Pre-download the models to cache (~7.6GB total from HuggingFace)
+# 9. Pre-download the models to cache (~10-12GB total from HuggingFace)
+# Qwen3-ASR-1.7B + ForcedAligner (~4.6GB)
 # Loading on CPU just to cache weights; GPU loading happens at runtime
 # Qwen3-ASR-1.7B + ForcedAligner (~4.6GB)
 python -c "from qwen_asr import Qwen3ASRModel; import torch; Qwen3ASRModel.from_pretrained('Qwen/Qwen3-ASR-1.7B', dtype=torch.float32, device_map='cpu', forced_aligner='Qwen/Qwen3-ForcedAligner-0.6B', forced_aligner_kwargs=dict(dtype=torch.float32, device_map='cpu'))"
 # Whisper-large-v3 (~3GB)
 python -c "import whisper_timestamped; whisper_timestamped.load_model('large-v3', device='cpu')"
+
+# 10. Pre-download enhancement models to cache (~3-5GB total)
+# MP-SENet-DNS via transformers (installed by qwen-asr transitive deps)
+python -c "
+from transformers import pipeline
+import numpy as np
+pipe = pipeline(task='audio-to-audio', model='JacobLinCool/MP-SENet-DNS', device='cpu')
+dummy = {'raw': np.zeros(16000, dtype=np.float32), 'sampling_rate': 16000}
+result = pipe(dummy)
+print('MP-SENet-DNS cached')
+"
+
+# MetricGAN+ via SpeechBrain
+python -c "
+from speechbrain.inference.enhancement import SpectralMaskEnhancement
+model = SpectralMaskEnhancement.from_hparams(
+    source='speechbrain/metricgan-plus-voicebank',
+    run_opts={'device': 'cpu'}
+)
+print('MetricGAN+ cached')
+"
 
 echo "Setup complete."
 echo "Activate venv: source venv/bin/activate"

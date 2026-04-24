@@ -9,8 +9,14 @@ const MAX_RECONNECT = 5;
 const $ = id => document.getElementById(id);
 
 // --- Stage config ---
-const STAGES = ['loading_model', 'converting', 'transcribing', 'saving', 'complete'];
-const STAGE_IDX = { loading_model: 0, converting: 1, transcribing: 2, saving: 3, complete: 4 };
+const STAGES = [
+    'loading_model', 'converting', 'noise_reducing', 'enhancing',
+    'transcribing', 'saving', 'complete'
+];
+const STAGE_IDX = {
+    loading_model: 0, converting: 1, noise_reducing: 2, enhancing: 3,
+    transcribing: 4, saving: 5, complete: 6
+};
 
 // === Drag and Drop ===
 const dropZone = $('dropZone');
@@ -56,6 +62,8 @@ async function uploadFile(file) {
   const formData = new FormData();
   formData.append('file', file);
   formData.append('model', $('modelSelect').value);
+  formData.append('enable_noise_reduction', $('toggleNoiseReduction').checked ? 'true' : 'false');
+  formData.append('enable_audio_enhancement', $('toggleAudioEnhancement').checked ? 'true' : 'false');
 
   try {
     const res = await fetch('/upload', { method: 'POST', body: formData });

@@ -5,7 +5,9 @@ from datetime import datetime
 
 import torch
 
-from config import RESULTS_DIR, UPLOADS_DIR, MODEL_NAME, DTYPE, CHUNK_DURATION_SEC, FORCE_ALIGNER_NAME
+from config import (RESULTS_DIR, UPLOADS_DIR, MODEL_NAME, DTYPE, CHUNK_DURATION_SEC,
+    FORCE_ALIGNER_NAME, ENABLE_NOISE_REDUCTION, ENABLE_AUDIO_ENHANCEMENT,
+    NOISE_REDUCTION_MODEL, ENHANCEMENT_MODEL)
 
 # === Supported models ===
 
@@ -75,6 +77,53 @@ async def _eviction_loop():
                 if now - _model_last_used.get(key, 0) > _IDLE_TIMEOUT_SEC:
                     del _loaded_models[key]
                     del _model_last_used[key]
+
+
+# === Enhancement singletons (shared across all transcription models) ===
+
+_noise_reduction_model = None
+_noise_reduction_lock = asyncio.Lock()
+_enhancement_model = None
+_enhancement_lock = asyncio.Lock()
+
+
+async def load_noise_reduction_model(progress_callback=None):
+    global _noise_reduction_model
+    async with _noise_reduction_lock:
+        if _noise_reduction_model is not None:
+            return _noise_reduction_model
+        if progress_callback:
+            await progress_callback({
+                "stage": "noise_reducing",
+                "message": "Loading noise reduction model...",
+                "progress": 16
+            })
+        from transformers import pipeline
+        _noise_reduction_model = pipeline(
+            task="audio-to-audio",
+            model=NOISE_REDUCTION_MODEL,
+            device="cuda" if torch.cuda.is_available() else "cpu",
+        )
+        return _noise_reduction_model
+
+
+async def load_enhancement_model(progress_callback=None):
+    global _enhancement_model
+    async with _enhancement_lock:
+        if _enhancement_model is not None:
+            return _enhancement_model
+        if progress_callback:
+            await progress_callback({
+                "stage": "enhancing",
+                "message": "Loading enhancement model...",
+                "progress": 26
+            })
+        from speechbrain.inference.enhancement import SpectralMaskEnhancement
+        _enhancement_model = SpectralMaskEnhancement.from_hparams(
+            source=ENHANCEMENT_MODEL,
+            run_opts={"device": "cuda" if torch.cuda.is_available() else "cpu"},
+        )
+        return _enhancement_model
 
 
 # === Model loaders ===
@@ -199,6 +248,53 @@ def convert_to_wav(input_path: str, output_path: str) -> None:
     ])
 
 
+def _normalize_audio(audio: "np.ndarray") -> "np.ndarray":
+    """Normalize audio to prevent clipping."""
+    import numpy as np
+    max_val = np.abs(audio).max()
+    if max_val > 1.0:
+        return audio / max_val
+    return audio
+
+
+def apply_noise_reduction(input_wav_path: str, output_wav_path: str, noise_reducer) -> None:
+    """Apply MP-SENet noise reduction to a WAV file."""
+    import soundfile as sf
+    import numpy as np
+
+    audio_array, sr = sf.read(input_wav_path, dtype='float32')
+    if audio_array.ndim > 1:
+        audio_array = audio_array.mean(axis=1)
+
+    result = noise_reducer({"raw": audio_array, "sampling_rate": sr})
+    output_audio = (
+        result["audio"][0]
+        if isinstance(result, dict)
+        else result[0]["audio"][0]
+    )
+
+    output_audio = _normalize_audio(output_audio)
+    sf.write(output_wav_path, output_audio, sr, subtype='PCM_16')
+
+
+def apply_enhancement(input_wav_path: str, output_wav_path: str, enhancer) -> None:
+    """Apply MetricGAN+ enhancement to a WAV file."""
+    import soundfile as sf
+    import numpy as np
+    import torch
+
+    audio_array, sr = sf.read(input_wav_path, dtype='float32')
+    if audio_array.ndim > 1:
+        audio_array = audio_array.mean(axis=1)
+
+    tensor = torch.from_numpy(audio_array).unsqueeze(0).to(enhancer.device)
+    enhanced_tensor = enhancer.enhance_batch(tensor, lengths=torch.tensor([1.0]))
+    enhanced_audio = enhanced_tensor.squeeze(0).cpu().numpy()
+
+    enhanced_audio = _normalize_audio(enhanced_audio)
+    sf.write(output_wav_path, enhanced_audio, sr, subtype='PCM_16')
+
+
 def get_audio_duration(wav_path: str) -> float:
     result = subprocess.run([
         "ffprobe", "-v", "error",
@@ -219,8 +315,15 @@ async def transcribe_file(
     original_filename: str,
     job_id: str,
     model_key: str = "qwen",
+    enable_noise_reduction: bool = None,
+    enable_audio_enhancement: bool = None,
     progress_callback: Optional[Callable] = None,
 ) -> Dict:
+    # Resolve None defaults to config values
+    if enable_noise_reduction is None:
+        enable_noise_reduction = ENABLE_NOISE_REDUCTION
+    if enable_audio_enhancement is None:
+        enable_audio_enhancement = ENABLE_AUDIO_ENHANCEMENT
     temp_wav = UPLOADS_DIR / f"{job_id}_converted.wav"
 
     # ---- Stage 1: FFmpeg Conversion ----
@@ -240,7 +343,147 @@ async def transcribe_file(
             "progress": 15
         })
 
-    # ---- Stage 2: Load Model ----
+    # ---- Stage 2: Enhancement ----
+    if enable_noise_reduction or enable_audio_enhancement:
+        enhanced_wav = UPLOADS_DIR / f"{job_id}_enhanced.wav"
+
+        if enable_noise_reduction and enable_audio_enhancement:
+            # Both enabled: noise reduction first, then enhancement
+            temp_denoised = UPLOADS_DIR / f"{job_id}_denoised.wav"
+            try:
+                if progress_callback:
+                    await progress_callback({
+                        "stage": "noise_reducing",
+                        "message": "Loading noise reduction model...",
+                        "progress": 16
+                    })
+                noise_reducer = await load_noise_reduction_model()
+                if progress_callback:
+                    await progress_callback({
+                        "stage": "noise_reducing",
+                        "message": "Applying noise reduction...",
+                        "progress": 18
+                    })
+                apply_noise_reduction(str(temp_wav), str(temp_denoised), noise_reducer)
+
+                if progress_callback:
+                    await progress_callback({
+                        "stage": "enhancing",
+                        "message": "Loading enhancement model...",
+                        "progress": 20
+                    })
+                enhancer_model = await load_enhancement_model()
+                if progress_callback:
+                    await progress_callback({
+                        "stage": "enhancing",
+                        "message": "Applying audio enhancement...",
+                        "progress": 22
+                    })
+                apply_enhancement(str(temp_denoised), str(enhanced_wav), enhancer_model)
+
+                if progress_callback:
+                    await progress_callback({
+                        "stage": "enhancing",
+                        "message": "Enhancement complete",
+                        "progress": 35
+                    })
+                temp_denoised.unlink(missing_ok=True)
+                temp_wav.unlink(missing_ok=True)
+                temp_wav = enhanced_wav
+            except Exception as exc:
+                import logging
+                logging.warning(f"Enhancement failed, using raw audio: {exc}")
+                for f in [enhanced_wav, temp_denoised]:
+                    try:
+                        f.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                if progress_callback:
+                    await progress_callback({
+                        "stage": "enhancing",
+                        "message": f"Enhancement skipped: {exc}",
+                        "progress": 35
+                    })
+
+        elif enable_noise_reduction:
+            denoised_wav = UPLOADS_DIR / f"{job_id}_denoised.wav"
+            try:
+                if progress_callback:
+                    await progress_callback({
+                        "stage": "noise_reducing",
+                        "message": "Loading noise reduction model...",
+                        "progress": 16
+                    })
+                noise_reducer = await load_noise_reduction_model()
+                if progress_callback:
+                    await progress_callback({
+                        "stage": "noise_reducing",
+                        "message": "Applying noise reduction...",
+                        "progress": 18
+                    })
+                apply_noise_reduction(str(temp_wav), str(denoised_wav), noise_reducer)
+                if progress_callback:
+                    await progress_callback({
+                        "stage": "noise_reducing",
+                        "message": "Noise reduction complete",
+                        "progress": 35
+                    })
+                temp_wav.unlink()
+                temp_wav = denoised_wav
+            except Exception as exc:
+                import logging
+                logging.warning(f"Noise reduction failed, using raw audio: {exc}")
+                try:
+                    denoised_wav.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                if progress_callback:
+                    await progress_callback({
+                        "stage": "noise_reducing",
+                        "message": f"Noise reduction skipped: {exc}",
+                        "progress": 35
+                    })
+
+        elif enable_audio_enhancement:
+            try:
+                if progress_callback:
+                    await progress_callback({
+                        "stage": "enhancing",
+                        "message": "Loading enhancement model...",
+                        "progress": 16
+                    })
+                enhancer_model = await load_enhancement_model()
+                if progress_callback:
+                    await progress_callback({
+                        "stage": "enhancing",
+                        "message": "Applying audio enhancement...",
+                        "progress": 18
+                    })
+                apply_enhancement(str(temp_wav), str(enhanced_wav), enhancer_model)
+                if progress_callback:
+                    await progress_callback({
+                        "stage": "enhancing",
+                        "message": "Enhancement complete",
+                        "progress": 35
+                    })
+                temp_wav.unlink()
+                temp_wav = enhanced_wav
+            except Exception as exc:
+                import logging
+                logging.warning(f"Enhancement failed, using raw audio: {exc}")
+                try:
+                    enhanced_wav.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                if progress_callback:
+                    await progress_callback({
+                        "stage": "enhancing",
+                        "message": f"Enhancement skipped: {exc}",
+                        "progress": 35
+                    })
+    # ---- End Stage 2 ----
+
+    # ---- Stage 3: Load Model ----
     model = await load_model(model_key, progress_callback)
 
     # ---- Stage 3: Chunked Transcription ----
@@ -248,7 +491,7 @@ async def transcribe_file(
         await progress_callback({
             "stage": "transcribing",
             "message": "Starting transcription...",
-            "progress": 20
+            "progress": 50
         })
 
     duration = get_audio_duration(str(temp_wav))
@@ -278,7 +521,7 @@ async def transcribe_file(
         if detected_language is None and chunk_lang:
             detected_language = chunk_lang
 
-        chunk_progress = 20 + int((chunk_idx + 1) / total_chunks * 60)
+        chunk_progress = 50 + int((chunk_idx + 1) / total_chunks * 42)
         if progress_callback:
             await progress_callback({
                 "stage": "transcribing",
@@ -295,7 +538,7 @@ async def transcribe_file(
         await progress_callback({
             "stage": "saving",
             "message": "Saving results...",
-            "progress": 85
+            "progress": 92
         })
 
     timestamp = datetime.now().isoformat()
@@ -309,7 +552,7 @@ async def transcribe_file(
         await progress_callback({
             "stage": "saving",
             "message": "Results saved",
-            "progress": 95
+            "progress": 98
         })
 
     # ---- Cleanup ----
