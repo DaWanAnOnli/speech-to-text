@@ -81,7 +81,12 @@ python main.py
 
 **Test upload via curl:**
 ```bash
-curl -X POST -F "file=@audio.mp3" -F "model=qwen" http://<server-ip>:8000/upload
+curl -X POST \
+  -F "file=@audio.mp3" \
+  -F "model=qwen" \
+  -F "enable_noise_reduction=true" \
+  -F "enable_audio_enhancement=true" \
+  http://<server-ip>:8000/upload
 ```
 
 ## GPU Compatibility
@@ -134,10 +139,25 @@ Server sends JSON messages with these shapes:
 | `complete` | 100 | `stage`, `message`, `progress`, `result_id`, `filename`, `text`, `language`, `model_key`, `model_name` |
 | `error` | 0 | `stage`, `message`, `progress` |
 
+## Server Logging
+
+The server uses a structured logger (`speech-to-text`) that outputs:
+- Job start with model name, active enhancements, and filename
+- Success logs when noise reduction and/or audio enhancement complete
+- Warnings when enhancement fails (pipeline continues with raw audio)
+
+Example output:
+```
+speech-to-text | [5d7dc88a] Starting transcription | model=Qwen3-ASR-1.7B | enhancements=noise_reduction, audio_enhancement | file=video.mp4
+speech-to-text | [5d7dc88a] Noise reduction applied
+speech-to-text | [5d7dc88a] Audio enhancement applied
+```
+
 ## Development Notes
 
 - Frontend is pure vanilla HTML/CSS/JS — no build step, no frameworks
 - Uploaded files are deleted after transcription starts (`finally` block in `run_transcription`)
 - FFmpeg must be installed on the server (`apt install ffmpeg`)
-- Models are cached at `~/.cache/huggingface/` after first download
+- Models are cached at `~/.cache/huggingface/` after first download; subsequent runs are fully offline
 - Qwen model + ForcedAligner cache: ~4.6GB; Whisper-large-v3 cache: ~3GB; Sepformer noise reduction cache: ~300MB; MetricGAN+ cache: ~300MB
+- Enhancement models (Sepformer, MetricGAN+) use `speechbrain.inference` API (not the deprecated `speechbrain.pretrained`)
