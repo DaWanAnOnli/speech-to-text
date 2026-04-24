@@ -168,9 +168,10 @@ async def run_transcription(job_id: str, file_path: str, filename: str,
     queued_notified = False
     while True:
         try:
-            _active_job_semaphore.acquire_nowait()
+            # Try non-blocking acquire (timeout=0 raises TimeoutError if unavailable)
+            await asyncio.wait_for(_active_job_semaphore.acquire(), timeout=0)
             break
-        except ValueError:
+        except asyncio.TimeoutError:
             if not queued_notified:
                 queued_notified = True
                 await manager.send(job_id, {
